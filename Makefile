@@ -13,6 +13,7 @@ NVCC_FLAGS := -O3 -std=c++17 -arch=sm_70 -Xcompiler -Wall,-Wextra
 
 # Paths to include directories
 INCLUDES := -I. -I..
+INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files
 SOURCES := src/flex_spmv_test.cu

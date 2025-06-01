@@ -31,11 +31,10 @@
 #include <stdio.h>
 #include <iterator>
 
-#include "agent_flex_spmv.cuh"
 
 #include <cub/agent/single_pass_scan_operators.cuh>
 #include <cub/agent/agent_segment_fixup.cuh>
-#include <cub/agent/agent_flex_spmv.cuh>
+#include <cub/agent/agent_spmv_orig.cuh>
 #include <cub/device/dispatch/dispatch_spmv_orig.cuh>
 #include <cub/util_type.cuh>
 #include <cub/util_debug.cuh>
@@ -45,6 +44,8 @@
 #include <cub/grid/grid_queue.cuh>
 #include <cub/config.cuh>
 #include <cub/util_namespace.cuh>
+
+#include "agent_flex_spmv.cuh"
 
 /// Optional outer namespace(s)
 CUB_NS_PREFIX

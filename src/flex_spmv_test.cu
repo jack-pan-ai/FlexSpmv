@@ -6,9 +6,9 @@
 #include <iostream>
 #include <random>
 #include <cuda_runtime.h>
+#include <cub/cub.cuh>
 
 #include "../include/device_flex_spmv.cuh"
-#include <cub/util_allocator.cuh>
 
 using namespace cub;
 

@@ -130,6 +130,13 @@ struct AgentFlexSpmv
 
     // BlockScan specialization
     typedef BlockScan<
+            KeyValuePairT,
+            BLOCK_THREADS,
+            AgentSpmvPolicyT::SCAN_ALGORITHM>
+        BlockScanT;
+
+    // BlockScan specialization
+    typedef BlockScan<
             ValueT,
             BLOCK_THREADS,
             AgentSpmvPolicyT::SCAN_ALGORITHM>
@@ -157,7 +164,7 @@ struct AgentFlexSpmv
     {
         CoordinateT tile_coords[2];
 
-        union
+        union Aliasable
         {
             // Smem needed for tile of merge items
             MergeItem merge_items[ITEMS_PER_THREAD + TILE_ITEMS + 1];
@@ -173,7 +180,7 @@ struct AgentFlexSpmv
 
             // Smem needed for tile prefix sum
             typename BlockPrefixSumT::TempStorage prefix_sum;
-        };
+        } aliasable;
     };
 
     /// Temporary storage type (unionable)
