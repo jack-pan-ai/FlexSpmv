@@ -9,7 +9,7 @@ CUDA_HOME ?= /usr/local/cuda
 NVCC := $(CUDA_HOME)/bin/nvcc
 
 # Flags for NVCC
-NVCC_FLAGS := -O3 -std=c++17 -arch=sm_70 -Xcompiler -Wall,-Wextra
+NVCC_FLAGS := -O3 -std=c++17 -arch=sm_70 -lcudart
 
 # Paths to include directories
 INCLUDES := -I. -I..

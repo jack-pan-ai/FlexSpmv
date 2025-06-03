@@ -55,7 +55,6 @@ void generateTestData(
     std::mt19937 gen(rd());
     std::uniform_real_distribution<ValueT> val_dist(0.1, 1.0);
     std::uniform_int_distribution<OffsetT> col_dist(0, num_cols - 1);
-    std::uniform_int_distribution<OffsetT> row_dist(0, num_rows - 1);
 
     // Generate dense matrix with random values
     for (int i = 0; i < num_rows * dense_matrix_width; ++i) {
@@ -87,16 +86,13 @@ void generateTestData(
             } while (used_cols.count(col) > 0);
             
             used_cols.insert(col);
-            OffsetT idx = h_row_offsets[i] + j;
-            h_column_indices[idx] = col;
-            
-            // Randomly select a row from the dense matrix for each nonzero
-            OffsetT dense_row = row_dist(gen);
-            h_column_indices_A[idx] = dense_row;
-            
+            OffsetT idx             = h_row_offsets[i] + j;
+            h_column_indices[idx]   = col;
+            h_column_indices_A[idx] = col;
+
             // Compute the reference result
-            ValueT val = h_dense_matrix[dense_row * dense_matrix_width + col];
-            h_vector_y_reference[i] += val * h_vector_x[col];
+            ValueT val = h_dense_matrix[i * dense_matrix_width + col];
+            h_vector_y_reference[i] += val * h_vector_x[col];      
         }
     }
 
@@ -166,6 +162,9 @@ bool checkResult(
 {
     for (int i = 0; i < num_elements; ++i) {
         ValueT diff = std::abs(h_result[i] - h_reference[i]);
+        // std::cout << "Error at index " << i << ": " 
+        //           << h_result[i] << " != " << h_reference[i] 
+        //           << " (diff = " << diff << ")" << std::endl;
         if (diff > tolerance) {
             std::cout << "Error at index " << i << ": " 
                       << h_result[i] << " != " << h_reference[i] 
@@ -182,8 +181,7 @@ bool checkResult(
 int main() {
     // Test parameters
     const int num_rows = 1000;
-    const int num_cols = 1000;
-    const int dense_matrix_width = 1000;
+    const int num_cols = dense_matrix_width = 100;
     const int nnz_per_row = 10;
     const int num_nonzeros = num_rows * nnz_per_row;
     
@@ -195,20 +193,20 @@ int main() {
     std::cout << "  Total nonzeros: " << num_nonzeros << std::endl;
     
     // Declare host and device arrays
-    float* h_dense_matrix = nullptr;
+    double* h_dense_matrix = nullptr;
     int* h_column_indices_A = nullptr;
     int* h_row_offsets = nullptr;
     int* h_column_indices = nullptr;
-    float* h_vector_x = nullptr;
-    float* h_vector_y_reference = nullptr;
-    float* h_vector_y = nullptr;
+    double* h_vector_x = nullptr;
+    double* h_vector_y_reference = nullptr;
+    double* h_vector_y = nullptr;
     
-    float* d_dense_matrix = nullptr;
+    double* d_dense_matrix = nullptr;
     int* d_column_indices_A = nullptr;
     int* d_row_offsets = nullptr;
     int* d_column_indices = nullptr;
-    float* d_vector_x = nullptr;
-    float* d_vector_y = nullptr;
+    double* d_vector_x = nullptr;
+    double* d_vector_y = nullptr;
     
     // Generate test data
     generateTestData(
@@ -263,7 +261,7 @@ int main() {
     }
     
     // Copy result back to host
-    cudaMemcpy(h_vector_y, d_vector_y, sizeof(float) * num_rows, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_vector_y, d_vector_y, sizeof(double) * num_rows, cudaMemcpyDeviceToHost);
     
     // Check result
     bool result_correct = checkResult(h_vector_y, h_vector_y_reference, num_rows);

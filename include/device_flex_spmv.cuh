@@ -32,9 +32,9 @@
 #include <iterator>
 #include <limits>
 
-// #include "../../device/device_spmv.cuh"
-// #include "../../util_namespace.cuh"
 #include <cub/device/dispatch/dispatch_spmv_orig.cuh>
+#include <cub/device/device_spmv.cuh>
+#include <cub/util_namespace.cuh>
 #include <cub/config.cuh>
 
 // Include our custom dispatch implementation
