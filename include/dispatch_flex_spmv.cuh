@@ -86,7 +86,10 @@ __global__ void DeviceFlexSpmv1ColKernel(
         if (end_nonzero_idx != nonzero_idx)
         {
             // value = spmv_params.d_values[nonzero_idx] * wrapped_vector_x[spmv_params.d_column_indices[nonzero_idx]];
-            value = spmv_params.d_dense_matrix[spmv_params.d_column_indices[nonzero_idx] + row_idx * spmv_params.dense_matrix_width] * wrapped_vector_x[spmv_params.d_column_indices[nonzero_idx]];
+            // // the dense matrix A 2D
+            // value = spmv_params.d_dense_matrix[spmv_params.d_column_indices[nonzero_idx] + row_idx * spmv_params.dense_matrix_width] * wrapped_vector_x[spmv_params.d_column_indices[nonzero_idx]];
+            // the dense matrix A 1D
+            value = spmv_params.d_values[spmv_params.d_column_indices_A[nonzero_idx]] * wrapped_vector_x[spmv_params.d_column_indices[nonzero_idx]];
         }
 
         spmv_params.d_vector_y[row_idx] = value;

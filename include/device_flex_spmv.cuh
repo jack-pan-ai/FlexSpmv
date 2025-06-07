@@ -70,7 +70,6 @@ struct DeviceFlexSpmv
         size_t&             temp_storage_bytes,                 ///< [in,out] Reference to size in bytes of d_temp_storage allocation
         ValueT*             d_dense_matrix,                     ///< [in] Pointer to the dense matrix A
         OffsetT*            d_column_indices_A,                 ///< [in] Pointer to the column indices for matrix A
-        int                 dense_matrix_width,                 ///< [in] Width of the dense matrix
         OffsetT*            d_row_offsets,                      ///< [in] Pointer to the array of m + 1 row offsets
         OffsetT*            d_column_indices,                   ///< [in] Pointer to the array of column indices
         ValueT*             d_vector_x,                         ///< [in] Pointer to the dense input vector x
@@ -99,7 +98,6 @@ struct DeviceFlexSpmv
         // Additional parameters for the dense matrix
         spmv_params.d_dense_matrix       = d_dense_matrix;
         spmv_params.d_column_indices_A   = d_column_indices_A;
-        spmv_params.dense_matrix_width   = dense_matrix_width;
 
         // Dispatch to our custom implementation
         return DispatchFlexSpmv<ValueT, OffsetT>::FlexDispatch(

@@ -35,14 +35,14 @@ void generateTestData(
     ValueT* &d_vector_y,            // Device output vector
     int num_rows,                   // Number of rows
     int num_cols,                   // Number of columns
-    int dense_matrix_width,         // Width of dense matrix
+    // int dense_matrix_width,         // Width of dense matrix
     int nnz_per_row)                // Nonzeros per row
 {
     // Calculate total number of nonzeros
     int num_nonzeros = num_rows * nnz_per_row;
 
     // Allocate host memory
-    h_dense_matrix = new ValueT[num_rows * dense_matrix_width];
+    h_dense_matrix = new ValueT[num_nonzeros];
     h_column_indices_A = new OffsetT[num_nonzeros];
     h_row_offsets = new OffsetT[num_rows + 1];
     h_column_indices = new OffsetT[num_nonzeros];
@@ -55,9 +55,10 @@ void generateTestData(
     std::mt19937 gen(rd());
     std::uniform_real_distribution<ValueT> val_dist(0.1, 1.0);
     std::uniform_int_distribution<OffsetT> col_dist(0, num_cols - 1);
+    std::uniform_int_distribution<OffsetT> col_dist_A(0, num_nonzeros - 1);
 
     // Generate dense matrix with random values
-    for (int i = 0; i < num_rows * dense_matrix_width; ++i) {
+    for (int i = 0; i < num_nonzeros; ++i) {
         h_dense_matrix[i] = val_dist(gen);
     }
 
@@ -76,28 +77,38 @@ void generateTestData(
     h_row_offsets[0] = 0;
     for (int i = 0; i < num_rows; ++i) {
         h_row_offsets[i + 1] = h_row_offsets[i] + nnz_per_row;
-        
+    }
+
+    for (int i = 0; i < num_rows; ++i) {        
         // Generate random columns for this row
         std::set<OffsetT> used_cols;
+        std::set<OffsetT> used_cols_A;
         for (int j = 0; j < nnz_per_row; ++j) {
-            OffsetT col;
+            OffsetT col, col_A;
             do {
                 col = col_dist(gen);
             } while (used_cols.count(col) > 0);
+            do {
+                col_A = col_dist_A(gen);
+            } while (used_cols_A.count(col_A) > 0);
             
             used_cols.insert(col);
+            used_cols_A.insert(col_A);
+
+            // Store the column indices
             OffsetT idx             = h_row_offsets[i] + j;
+            OffsetT idx_A           = h_row_offsets[i] + j;
             h_column_indices[idx]   = col;
-            h_column_indices_A[idx] = col;
+            h_column_indices_A[idx_A] = col_A;
 
             // Compute the reference result
-            ValueT val = h_dense_matrix[i * dense_matrix_width + col];
+            ValueT val = h_dense_matrix[col_A];
             h_vector_y_reference[i] += val * h_vector_x[col];      
         }
     }
 
     // Allocate device memory
-    g_allocator.DeviceAllocate((void**)&d_dense_matrix, sizeof(ValueT) * num_rows * dense_matrix_width);
+    g_allocator.DeviceAllocate((void**)&d_dense_matrix, sizeof(ValueT) * num_nonzeros);
     g_allocator.DeviceAllocate((void**)&d_column_indices_A, sizeof(OffsetT) * num_nonzeros);
     g_allocator.DeviceAllocate((void**)&d_row_offsets, sizeof(OffsetT) * (num_rows + 1));
     g_allocator.DeviceAllocate((void**)&d_column_indices, sizeof(OffsetT) * num_nonzeros);
@@ -105,7 +116,7 @@ void generateTestData(
     g_allocator.DeviceAllocate((void**)&d_vector_y, sizeof(ValueT) * num_rows);
 
     // Copy data to device
-    cudaMemcpy(d_dense_matrix, h_dense_matrix, sizeof(ValueT) * num_rows * dense_matrix_width, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_dense_matrix, h_dense_matrix, sizeof(ValueT) * num_nonzeros, cudaMemcpyHostToDevice);
     cudaMemcpy(d_column_indices_A, h_column_indices_A, sizeof(OffsetT) * num_nonzeros, cudaMemcpyHostToDevice);
     cudaMemcpy(d_row_offsets, h_row_offsets, sizeof(OffsetT) * (num_rows + 1), cudaMemcpyHostToDevice);
     cudaMemcpy(d_column_indices, h_column_indices, sizeof(OffsetT) * num_nonzeros, cudaMemcpyHostToDevice);
@@ -181,14 +192,13 @@ bool checkResult(
 int main() {
     // Test parameters
     const int num_rows = 1000;
-    const int num_cols = dense_matrix_width = 100;
+    const int num_cols = 100;
     const int nnz_per_row = 10;
     const int num_nonzeros = num_rows * nnz_per_row;
     
     std::cout << "Running Flexible Spmv test with:" << std::endl;
     std::cout << "  Rows: " << num_rows << std::endl;
     std::cout << "  Columns: " << num_cols << std::endl;
-    std::cout << "  Dense matrix width: " << dense_matrix_width << std::endl;
     std::cout << "  Nonzeros per row: " << nnz_per_row << std::endl;
     std::cout << "  Total nonzeros: " << num_nonzeros << std::endl;
     
@@ -214,7 +224,7 @@ int main() {
         h_vector_x, h_vector_y_reference, h_vector_y,
         d_dense_matrix, d_column_indices_A, d_row_offsets, d_column_indices,
         d_vector_x, d_vector_y,
-        num_rows, num_cols, dense_matrix_width, nnz_per_row);
+        num_rows, num_cols, nnz_per_row);
     
     // Allocate temporary storage for DeviceFlexSpmv
     size_t temp_storage_bytes = 0;
@@ -223,7 +233,7 @@ int main() {
     // Get required temporary storage size
     cudaError_t error = DeviceFlexSpmv::CsrMV(
         d_temp_storage, temp_storage_bytes,
-        d_dense_matrix, d_column_indices_A, dense_matrix_width,
+        d_dense_matrix, d_column_indices_A, 
         d_row_offsets, d_column_indices,
         d_vector_x, d_vector_y,
         num_rows, num_cols, num_nonzeros);
@@ -244,7 +254,7 @@ int main() {
     // Execute the Flexible Spmv
     error = DeviceFlexSpmv::CsrMV(
         d_temp_storage, temp_storage_bytes,
-        d_dense_matrix, d_column_indices_A, dense_matrix_width,
+        d_dense_matrix, d_column_indices_A, 
         d_row_offsets, d_column_indices,
         d_vector_x, d_vector_y,
         num_rows, num_cols, num_nonzeros);
