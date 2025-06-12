@@ -1,3 +1,4 @@
 .*/
 flex_spmv_test
 *.mtx
+bin/
