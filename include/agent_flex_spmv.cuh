@@ -1,6 +1,6 @@
 /**
  * @file agent_flex_spmv.cuh
- * @brief Extension of CUB's AgentSpmv to use a dense matrix with column indices
+ * @brief Extension of CUB's AgentSpmv to use flexible sparse matrix with column indices
  */
 
 #pragma once
@@ -26,16 +26,16 @@ CUB_NS_PREFIX
 namespace cub {
 
 /**
- * @brief FlexSpmvParams extends SpmvParams to include a dense matrix and column indices
+ * @brief FlexSpmvParams extends SpmvParams to include a flexible matrix and indices inputs
  */
 template <
     typename ValueT,              ///< Matrix and vector value type
     typename OffsetT>             ///< Signed integer type for sequence offsets
 struct FlexSpmvParams : public SpmvParams<ValueT, OffsetT>
 {
-    ValueT*     d_dense_matrix;           ///< Pointer to the dense matrix A
+    // flexible matrix and indices inputs (code gen)
+    ValueT*     d_spm_A;           ///< Pointer to the sparse matrix A
     OffsetT*    d_column_indices_A;       ///< Pointer to the column indices for matrix A
-    // int         dense_matrix_width;       ///< Width of the dense matrix
     
     // Base params remain the same:
     ValueT*   d_values;            ///< Pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
@@ -52,7 +52,7 @@ struct FlexSpmvParams : public SpmvParams<ValueT, OffsetT>
 
 
 /**
- * @brief AgentFlexSpmv implements SpMV using a dense matrix and column indices
+ * @brief AgentFlexSpmv implements SpMV using a flexible matrix and indices inputs
  */
 template <
     typename    AgentSpmvPolicyT,           ///< Parameterized AgentSpmvPolicy tuning policy type
@@ -107,7 +107,7 @@ struct AgentFlexSpmv
             AgentSpmvPolicyT::VECTOR_VALUES_LOAD_MODIFIER,
             ValueT,
             OffsetT>
-        DenseMatrixIteratorT;
+        SpmIteratorT;
 
     typedef CacheModifiedInputIterator<
             AgentSpmvPolicyT::VECTOR_VALUES_LOAD_MODIFIER,
@@ -201,10 +201,9 @@ struct AgentFlexSpmv
     VectorValueIteratorT            wd_vector_x;          ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
     VectorValueIteratorT            wd_vector_y;          ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
     
-    // <Wrapped pointer to the array of indexing A>
-    ColumnIndicesIteratorT          wd_column_indices_A;  ///< Wrapped pointer to column indices for dense matrix
-    DenseMatrixIteratorT            wd_dense_matrix;      ///< Wrapped pointer to dense matrix array
-    // OffsetT                         wd_dense_matrix_width; /// <int number identifying the width your dense matrix>
+    // <Wrapped pointer to the array of indexing A> (code gen)
+    ColumnIndicesIteratorT          wd_column_indices_A;  ///< Wrapped pointer to column indices for flexible matrix
+    SpmIteratorT                    wd_spm_A;      ///< Wrapped pointer to flexible matrix array
     
     //---------------------------------------------------------------------
     // Constructor
@@ -222,11 +221,12 @@ struct AgentFlexSpmv
         spmv_params(spmv_params),
         wd_row_end_offsets(spmv_params.d_row_end_offsets),
         wd_column_indices(spmv_params.d_column_indices),
-        wd_column_indices_A(spmv_params.d_column_indices_A),
-        wd_dense_matrix(spmv_params.d_dense_matrix),
-        // wd_dense_matrix_width(spmv_params.dense_matrix_width),
         wd_vector_x(spmv_params.d_vector_x),
-        wd_vector_y(spmv_params.d_vector_y)
+        wd_vector_y(spmv_params.d_vector_y),
+
+        // flexible matrix and indices inputs (code gen)
+        wd_column_indices_A(spmv_params.d_column_indices_A),
+        wd_spm_A(spmv_params.d_spm_A)
     {}
 
     //---------------------------------------------------------------------
@@ -234,7 +234,7 @@ struct AgentFlexSpmv
     //---------------------------------------------------------------------
 
     /**
-     * Consume a merge tile, specialized for direct-load of nonzeros
+     * Consume a merge tile, specialized for direct-load of nonzeros (to be modified later)
      */
     __device__ __forceinline__ KeyValuePairT ConsumeTile(
         int             tile_idx,
@@ -260,7 +260,6 @@ struct AgentFlexSpmv
 
         // Search for the thread's starting coordinate within the merge tile
         CountingInputIterator<OffsetT>  tile_nonzero_indices(tile_start_coord.y);
-        // CountingInputIterator<OffsetT>  tile_dense_matrix_indices(tile_start_coord.x);
         CoordinateT                     thread_start_coord;
 
         MergePathSearch(
@@ -283,12 +282,10 @@ struct AgentFlexSpmv
         for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
         {
             OffsetT nonzero_idx         = CUB_MIN(tile_nonzero_indices[thread_current_coord.y], spmv_params.num_nonzeros - 1);
-            // OffsetT dense_matrix_idx    = CUB_MIN(tile_dense_matrix_indices[thread_current_coord.x], spmv_params.num_rows - 1);
             OffsetT column_idx          = wd_column_indices[nonzero_idx];
             OffsetT column_idx_A        = wd_column_indices_A[nonzero_idx];
             
-            // ValueT  value               = wd_dense_matrix[column_idx_A + dense_matrix_idx * wd_dense_matrix_width]; // two dimension for this dense matrix, 1D for this dense vector
-            ValueT  value               = wd_dense_matrix[column_idx_A]; // one dimension for this dense vector
+            ValueT  value               = wd_spm_A[column_idx_A]; // one dimension for this spm vector
             ValueT  vector_value        = wd_vector_x[column_idx];
             ValueT  nonzero             = value * vector_value;
 
@@ -395,6 +392,7 @@ struct AgentFlexSpmv
         {
             int nonzero_idx                 = threadIdx.x + (ITEM * BLOCK_THREADS);
 
+            // (code gen) for CUB_PTX_ARCH >= 520
             // ValueIteratorT a                = wd_values + tile_start_coord.y + nonzero_idx;
             ColumnIndicesIteratorT ci       = wd_column_indices + tile_start_coord.y + nonzero_idx;
             ColumnIndicesIteratorT ci_A     = wd_column_indices_A + tile_start_coord.y + nonzero_idx;
@@ -403,30 +401,14 @@ struct AgentFlexSpmv
 
             if (nonzero_idx < tile_num_nonzeros)
             {
-                
-                // find the row index of the dense matrix
-                OffsetT dense_matrix_idrow;
-                OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
-                #pragma unroll
-                for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
-                {
-                    if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
-                        dense_matrix_idrow = ROW_INDEX;
-                        break;
-                    }
-                }
-
+                // index for A and X, I_A[i] and I_X[i]
                 OffsetT column_idx              = *ci;
                 OffsetT column_idx_A            = *ci_A;
-                // ValueT  value                   = *a;
 
-                // ValueT  vector_value            = spmv_params.t_vector_x[column_idx];
-                // ValueT vector_value_A           = spmv_params.t_vector_x[column_idx_A];
+                // value for X and A, X[I_X[i]] and A[I_A[i]]
                 ValueT vector_value                    = wd_vector_x[column_idx];
-                // ValueT vector_value_A                  = wd_dense_matrix[column_idx_A + (tile_start_coord.x + dense_matrix_idrow) * wd_dense_matrix_width]; // row-major store
-                ValueT vector_value_A                  = wd_dense_matrix[column_idx_A]; // row-major store
+                ValueT vector_value_A                  = wd_spm_A[column_idx_A]; // row-major store
 
-                // ValueT  nonzero                 = value * vector_value;
                 ValueT nonzero                  = vector_value * vector_value_A;
 
                 *s    = nonzero;
@@ -443,25 +425,11 @@ struct AgentFlexSpmv
                 int     nonzero_idx             = threadIdx.x + (ITEM * BLOCK_THREADS);
                 nonzero_idx                     = CUB_MIN(nonzero_idx, tile_num_nonzeros - 1);
 
-                // find the row index of the dense matrix
-                OffsetT dense_matrix_idrow;
-                OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
-                #pragma unroll
-                for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
-                {
-                    if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
-                        dense_matrix_idrow = ROW_INDEX;
-                        break;
-                    }
-                }
-
                 OffsetT column_idx              = wd_column_indices[tile_start_coord.y + nonzero_idx];
                 OffsetT column_idx_A            = wd_column_indices_A[tile_start_coord.y + nonzero_idx];
-                // ValueT  value                   = wd_values[tile_start_coord.y + nonzero_idx];
 
                 ValueT  vector_value            = wd_vector_x[column_idx];
-                // ValueT  vector_value_A          = wd_dense_matrix[column_idx_A + (tile_start_coord.x + dense_matrix_idrow) * wd_dense_matrix_width]; // row-major store
-                ValueT  vector_value_A          = wd_dense_matrix[column_idx_A]; // same position to vector X
+                ValueT  vector_value_A          = wd_spm_A[column_idx_A]; // same position to vector X
                 ValueT  nonzero                 = vector_value * vector_value_A;
 
                 s_tile_nonzeros[nonzero_idx]    = nonzero;

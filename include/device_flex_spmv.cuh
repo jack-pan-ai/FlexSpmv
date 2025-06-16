@@ -60,6 +60,7 @@ struct DeviceFlexSpmv
     /**
      * @brief This function performs the matrix-vector operation y = A[colIdxA[k]]*x[colIdxX[k]]
      * Most of the implementation is the same as in DeviceSpmv, except for the sparse matrix parameters
+     * (code gen) for d_spm_A and d_column_indices_A
      */
     template <
         typename ValueT,
@@ -68,7 +69,7 @@ struct DeviceFlexSpmv
     static cudaError_t CsrMV(
         void*               d_temp_storage,                     ///< [in] Device-accessible allocation of temporary storage
         size_t&             temp_storage_bytes,                 ///< [in,out] Reference to size in bytes of d_temp_storage allocation
-        ValueT*             d_dense_matrix,                     ///< [in] Pointer to the dense matrix A
+        ValueT*             d_spm_A,                            ///< [in] Pointer to the flexible sparse smatrix A
         OffsetT*            d_column_indices_A,                 ///< [in] Pointer to the column indices for matrix A
         OffsetT*            d_row_offsets,                      ///< [in] Pointer to the array of m + 1 row offsets
         OffsetT*            d_column_indices,                   ///< [in] Pointer to the array of column indices
@@ -95,8 +96,8 @@ struct DeviceFlexSpmv
         spmv_params.alpha                = alpha;
         spmv_params.beta                 = beta;
         
-        // Additional parameters for the dense matrix
-        spmv_params.d_dense_matrix       = d_dense_matrix;
+        // Additional parameters for the flexible sparse matrix (code gen)
+        spmv_params.d_spm_A              = d_spm_A;
         spmv_params.d_column_indices_A   = d_column_indices_A;
 
         // Dispatch to our custom implementation
