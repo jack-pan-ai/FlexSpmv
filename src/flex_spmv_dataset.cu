@@ -465,7 +465,7 @@ void DisplayPerf(
     effective_bandwidth = double(total_bytes) / avg_ms / 1.0e6;
 
     if (!g_quiet)
-        printf("fp%d: %.4f setup ms, %.4f avg ms, %.5f gflops, %.3lf effective GB/s (%.2f%% peak)\n",
+        printf("fp%ld: %.4f setup ms, %.4f avg ms, %.5f gflops, %.3lf effective GB/s (%.2f%% peak)\n",
             sizeof(ValueT) * 8,
             setup_ms,
             avg_ms,
