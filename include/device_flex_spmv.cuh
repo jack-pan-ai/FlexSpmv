@@ -70,14 +70,17 @@ struct DeviceFlexSpmv
         void*               d_temp_storage,                     ///< [in] Device-accessible allocation of temporary storage
         size_t&             temp_storage_bytes,                 ///< [in,out] Reference to size in bytes of d_temp_storage allocation
         ValueT*             d_spm_A,                            ///< [in] Pointer to the flexible sparse smatrix A
+        ValueT*             d_spm_B,                            ///< [in] Pointer to the flexible sparse smatrix B
         OffsetT*            d_column_indices_A,                 ///< [in] Pointer to the column indices for matrix A
         OffsetT*            d_row_offsets,                      ///< [in] Pointer to the array of m + 1 row offsets
-        OffsetT*            d_column_indices,                   ///< [in] Pointer to the array of column indices
+        OffsetT*            d_column_indices_1,                 ///< [in] Pointer to the column indices for matrix A
+        OffsetT*            d_column_indices_2,                 ///< [in] Pointer to the column indices for matrix A
         ValueT*             d_vector_x,                         ///< [in] Pointer to the dense input vector x
         ValueT*             d_vector_y,                         ///< [out] Pointer to the dense output vector y
         int                 num_rows,                           ///< [in] Number of rows of matrix A
         int                 num_cols,                           ///< [in] Number of columns of matrix A
         int                 num_nonzeros,                       ///< [in] Number of nonzero elements
+        int                 dimension,                          ///< [in] Dimension of the input vector x
         ValueT              alpha              = 1.0,           ///< [in] Alpha multiplicand
         ValueT              beta               = 0.0,           ///< [in] Beta addend-multiplicand
         cudaStream_t        stream             = 0,             ///< [in] CUDA stream to launch kernels within
@@ -87,7 +90,7 @@ struct DeviceFlexSpmv
         FlexSpmvParams<ValueT, OffsetT> spmv_params;
         spmv_params.d_values             = nullptr;  // Not used in our implementation
         spmv_params.d_row_end_offsets    = d_row_offsets + 1;
-        spmv_params.d_column_indices     = d_column_indices;
+        // spmv_params.d_column_indices     = d_column_indices;
         spmv_params.d_vector_x           = d_vector_x;
         spmv_params.d_vector_y           = d_vector_y;
         spmv_params.num_rows             = num_rows;
@@ -98,7 +101,11 @@ struct DeviceFlexSpmv
         
         // Additional parameters for the flexible sparse matrix (code gen)
         spmv_params.d_spm_A              = d_spm_A;
+        spmv_params.d_spm_B              = d_spm_B;
         spmv_params.d_column_indices_A   = d_column_indices_A;
+        spmv_params.d_column_indices_1   = d_column_indices_1;
+        spmv_params.d_column_indices_2   = d_column_indices_2;
+        spmv_params.dimension            = dimension;
 
         // Dispatch to our custom implementation
         return DispatchFlexSpmv<ValueT, OffsetT>::FlexDispatch(

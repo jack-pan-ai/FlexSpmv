@@ -33,14 +33,18 @@ template <
     typename OffsetT>             ///< Signed integer type for sequence offsets
 struct FlexSpmvParams : public SpmvParams<ValueT, OffsetT>
 {
-    // flexible matrix and indices inputs (code gen)
+    // flexible matrix and indices inputs (code gen) removed if using spmv from scratchss
     ValueT*     d_spm_A;           ///< Pointer to the sparse matrix A
+    ValueT*     d_spm_B;           ///< Pointer to the sparse matrix B
     OffsetT*    d_column_indices_A;       ///< Pointer to the column indices for matrix A
+    OffsetT*    d_column_indices_1;       ///< Pointer to the column indices for matrix A
+    OffsetT*    d_column_indices_2;       ///< Pointer to the column indices for matrix A
+    int         dimension;                ///< Dimension of the input vector x
     
     // Base params remain the same:
-    ValueT*   d_values;            ///< Pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
+    // ValueT*   d_values;            ///< Pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
     OffsetT*  d_row_end_offsets;   ///< Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-    OffsetT*  d_column_indices;    ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+    // OffsetT*  d_column_indices;    ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
     ValueT*   d_vector_x;          ///< Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
     ValueT*         d_vector_y;          ///< Pointer to the array of \p num_rows values corresponding to the dense output vector <em>y</em>
     int             num_rows;            ///< Number of rows of matrix <b>A</b>.
@@ -197,14 +201,18 @@ struct AgentFlexSpmv
 
     // ValueIteratorT                  wd_values;            ///< Wrapped pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
     RowOffsetsIteratorT             wd_row_end_offsets;   ///< Wrapped Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-    ColumnIndicesIteratorT          wd_column_indices;    ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+    // ColumnIndicesIteratorT          wd_column_indices;    ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
     VectorValueIteratorT            wd_vector_x;          ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
     VectorValueIteratorT            wd_vector_y;          ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
     
     // <Wrapped pointer to the array of indexing A> (code gen)
     ColumnIndicesIteratorT          wd_column_indices_A;  ///< Wrapped pointer to column indices for flexible matrix
     SpmIteratorT                    wd_spm_A;      ///< Wrapped pointer to flexible matrix array
-    
+    SpmIteratorT                    wd_spm_B;      ///< Wrapped pointer to flexible matrix array
+    ColumnIndicesIteratorT          wd_column_indices_1;  ///< Wrapped pointer to column indices for flexible matrix
+    ColumnIndicesIteratorT          wd_column_indices_2;  ///< Wrapped pointer to column indices for flexible matrix
+    int                             dimension;            ///< Dimension of the input vector x
+
     //---------------------------------------------------------------------
     // Constructor
     //---------------------------------------------------------------------
@@ -220,13 +228,17 @@ struct AgentFlexSpmv
         temp_storage(temp_storage.Alias()),
         spmv_params(spmv_params),
         wd_row_end_offsets(spmv_params.d_row_end_offsets),
-        wd_column_indices(spmv_params.d_column_indices),
+        // wd_column_indices(spmv_params.d_column_indices),
         wd_vector_x(spmv_params.d_vector_x),
         wd_vector_y(spmv_params.d_vector_y),
 
-        // flexible matrix and indices inputs (code gen)
+        // flexible matrix and indices inputs (code gen) removed if using spmv from scratch
         wd_column_indices_A(spmv_params.d_column_indices_A),
-        wd_spm_A(spmv_params.d_spm_A)
+        wd_spm_A(spmv_params.d_spm_A),
+        wd_spm_B(spmv_params.d_spm_B),
+        wd_column_indices_1(spmv_params.d_column_indices_1),
+        wd_column_indices_2(spmv_params.d_column_indices_2),
+        dimension(spmv_params.dimension)
     {}
 
     //---------------------------------------------------------------------
@@ -372,6 +384,18 @@ struct AgentFlexSpmv
         OffsetT*    s_tile_row_end_offsets  = &temp_storage.aliasable.merge_items[0].row_end_offset;
         ValueT*     s_tile_nonzeros         = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD].nonzero;
 
+        // put all intermediate results in register, considering the edge-wise operation is private to each thread (code gen), the r_ij can be reused 
+        ValueT r_i[dimension];
+        ValueT r_j[dimension];
+        ValueT r_ij[dimension];
+        ValueT e_ij[dimension];
+        ValueT f_ij[dimension];
+        ValueT r_ij_norm=0.0;
+        // intermediate results for each thread
+        if (dimension > 1) {
+            ValueT r_tile_nonzeros[ITEMS_PER_THREAD * (dimension - 1)];
+        }
+
         // Gather the row end-offsets for the merge tile into shared memory
         #pragma unroll 1
         for (int item = threadIdx.x; item < tile_num_rows + ITEMS_PER_THREAD; item += BLOCK_THREADS)
@@ -384,6 +408,20 @@ struct AgentFlexSpmv
 
         CTA_SYNC();
 
+        // Search for the thread's starting coordinate within the merge tile
+        CountingInputIterator<OffsetT>  tile_nonzero_indices(tile_start_coord.y);
+        CoordinateT                     thread_start_coord;
+
+        MergePathSearch(
+            OffsetT(threadIdx.x * ITEMS_PER_THREAD),    // Diagonal
+            s_tile_row_end_offsets,                     // List A
+            tile_nonzero_indices,                       // List B
+            tile_num_rows,
+            tile_num_nonzeros,
+            thread_start_coord);
+
+        CTA_SYNC();            // Perf-sync
+
 #if (CUB_PTX_ARCH >= 520)
         
         // Gather the nonzeros for the merge tile into shared memory
@@ -394,24 +432,66 @@ struct AgentFlexSpmv
 
             // (code gen) for CUB_PTX_ARCH >= 520
             // ValueIteratorT a                = wd_values + tile_start_coord.y + nonzero_idx;
-            ColumnIndicesIteratorT ci       = wd_column_indices + tile_start_coord.y + nonzero_idx;
+            // ColumnIndicesIteratorT ci       = wd_column_indices + tile_start_coord.y + nonzero_idx;
             ColumnIndicesIteratorT ci_A     = wd_column_indices_A + tile_start_coord.y + nonzero_idx;
-            
+            ColumnIndicesIteratorT ci_1     = wd_column_indices_1 + tile_start_coord.y + nonzero_idx;
+            ColumnIndicesIteratorT ci_2     = wd_column_indices_2 + tile_start_coord.y + nonzero_idx;
+
             ValueT* s                       = s_tile_nonzeros + nonzero_idx;
 
             if (nonzero_idx < tile_num_nonzeros)
             {
                 // index for A and X, I_A[i] and I_X[i]
-                OffsetT column_idx              = *ci;
+                // OffsetT column_idx              = *ci;
                 OffsetT column_idx_A            = *ci_A;
+                OffsetT column_idx_1            = *ci_1;
+                OffsetT column_idx_2            = *ci_2;
 
-                // value for X and A, X[I_X[i]] and A[I_A[i]]
-                ValueT vector_value                    = wd_vector_x[column_idx];
-                ValueT vector_value_A                  = wd_spm_A[column_idx_A]; // row-major store
+                // select ri and rj from vector x
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    r_i[k] = wd_vector_x[column_idx_1 * dimension + k];
+                    r_j[k] = wd_vector_x[column_idx_2 * dimension + k];
+                }
 
-                ValueT nonzero                  = vector_value * vector_value_A;
+                // compute r_ij
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    r_ij[k] = r_i[k] - r_j[k];
+                }
 
-                *s    = nonzero;
+                // compute r_ij_norm
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    r_ij_norm += r_ij[k] * r_ij[k];
+                }
+                r_ij_norm = std::sqrt(r_ij_norm);
+
+                // compute e_ij
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    e_ij[k] = r_ij[k] / r_ij_norm;
+                }
+
+                // compute f_ij
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    f_ij[k] = - wd_spm_B[column_idx_A] * (r_ij_norm - wd_spm_A[column_idx_A]) * e_ij[k];
+                }
+
+                // assign f_ij to s
+                #pragma unroll
+                for (int k = 0; k < dimension; ++k) {
+                    s[k] = f_ij[k];
+                }
+
+                // // value for X and A, X[I_X[i]] and A[I_A[i]]
+                // ValueT vector_value                    = wd_vector_x[column_idx];
+                // ValueT vector_value_A                  = wd_spm_A[column_idx_A]; // row-major store
+
+                // ValueT nonzero                  = vector_value * vector_value_A;
+
+                // *s    = nonzero;
             }
         }
 #else
@@ -439,20 +519,6 @@ struct AgentFlexSpmv
 #endif
 
         CTA_SYNC();
-
-        // Search for the thread's starting coordinate within the merge tile
-        CountingInputIterator<OffsetT>  tile_nonzero_indices(tile_start_coord.y);
-        CoordinateT                     thread_start_coord;
-
-        MergePathSearch(
-            OffsetT(threadIdx.x * ITEMS_PER_THREAD),    // Diagonal
-            s_tile_row_end_offsets,                     // List A
-            tile_nonzero_indices,                       // List B
-            tile_num_rows,
-            tile_num_nonzeros,
-            thread_start_coord);
-
-        CTA_SYNC();            // Perf-sync
 
         // Compute the thread's merge path segment
         CoordinateT     thread_current_coord = thread_start_coord;
