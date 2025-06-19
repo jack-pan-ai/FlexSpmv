@@ -9,6 +9,7 @@
 #include <cub/cub.cuh>
 
 #include "../include/device_flex_spmv.cuh"
+#include "../utils.h"
 
 using namespace cub;
 
@@ -117,8 +118,11 @@ void generateTestData(
             h_column_indices_A[idx_A] = col_A;
 
             // Compute the reference result
-            r_i = &h_vector_x[i * dimension];
-            r_j = &h_vector_x[col * dimension];
+            for (int k = 0; k < dimension; ++k) {
+                r_i[k] = h_vector_x[i * dimension + k];
+                r_j[k] = h_vector_x[col * dimension + k];
+            }
+
             for (int k = 0; k < dimension; ++k) {
                 r_ij[k] = r_i[k] - r_j[k];
             }
@@ -237,6 +241,35 @@ bool checkResult(
     return true;
 }
 
+
+/**
+ * Compares the equivalence of two arrays
+ */
+template <typename ValueT>
+int checkResult_2(ValueT* computed, ValueT* reference, int num_rows, int dimension, bool verbose = true)
+{
+    ValueT meps = std::numeric_limits<ValueT>::epsilon();
+    ValueT fmeps = std::numeric_limits<ValueT>::epsilon();
+ 
+    for (int i = 0; i < num_rows * dimension; i++)
+    {
+        float   a           = computed[i];
+        float   b           = reference[i];
+        int     int_diff    = std::abs(*(int*)&a - *(int*)&b);
+        float   sqrt_diff   = sqrt(float(int_diff));
+
+        if (sqrt_diff > num_rows)      
+        {
+            if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
+                 << computed[i] << " != "
+                 << reference[i]; 
+            return false;
+        }
+    }
+    return true;
+}
+
+
 /**
  * @brief Main test function
  */
@@ -295,7 +328,7 @@ int main() {
         d_spm_A, d_spm_B, d_column_indices_A, d_column_indices_1, d_column_indices_2,
         d_row_offsets,
         d_vector_x, d_vector_y,
-        num_rows, num_cols, num_nonzeros, dimension);
+        num_rows, num_cols, num_nonzeros);
     
     if (error != cudaSuccess) {
         std::cerr << "Error in DeviceFlexSpmv::CsrMV sizing: " << cudaGetErrorString(error) << std::endl;
@@ -316,7 +349,7 @@ int main() {
         d_spm_A, d_spm_B, d_column_indices_A, d_column_indices_1, d_column_indices_2,
         d_row_offsets,
         d_vector_x, d_vector_y,
-        num_rows, num_cols, num_nonzeros, dimension);
+        num_rows, num_cols, num_nonzeros);
     
     if (error != cudaSuccess) {
         std::cerr << "Error in DeviceFlexSpmv::CsrMV execution: " << cudaGetErrorString(error) << std::endl;
@@ -333,12 +366,12 @@ int main() {
     cudaMemcpy(h_vector_y, d_vector_y, sizeof(double) * num_rows * dimension, cudaMemcpyDeviceToHost);
     
     // Check result
-    bool result_correct = checkResult(h_vector_y, h_vector_y_reference, num_rows, dimension);
+    bool result_correct = checkResult_2(h_vector_y, h_vector_y_reference, num_rows, dimension);
     
     if (result_correct) {
-        std::cout << "Flexible Spmv test PASSED!" << std::endl;
+        std::cout << "\n Flexible Spmv test PASSED!" << std::endl;
     } else {
-        std::cout << "Flexible Spmv test FAILED!" << std::endl;
+        std::cout << "\n Flexible Spmv test FAILED!" << std::endl;
     }
     
     // Clean up

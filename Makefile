@@ -11,20 +11,24 @@ NVCC := $(CUDA_HOME)/bin/nvcc
 
 # Flags for NVCC
 NVCC_FLAGS := -O3 -std=c++17 -arch=sm_80 -lcudart -Werror all-warnings
+NVCC_FLAGS += -G -g -O0 # for debug
 
 # Paths to include directories
 INCLUDES := -I. -I..
 INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files and their corresponding executables
-TEST_SOURCE := src/flex_spmv_test.cu
-TEST_EXEC := $(BIN_DIR)/flex_spmv_test
+# TEST_SOURCE := src/flex_spmv_test.cu
+# TEST_EXEC := $(BIN_DIR)/flex_spmv_test
 
-DATASET_SOURCE := src/flex_spmv_dataset.cu
-DATASET_EXEC := $(BIN_DIR)/flex_spmv_datasets
+# DATASET_SOURCE := src/flex_spmv_dataset.cu
+# DATASET_EXEC := $(BIN_DIR)/flex_spmv_datasets
+
+SPRINGMASS_SOURCE := src/flex_spmv_springmass.cu
+SPRINGMASS_EXEC := $(BIN_DIR)/flex_spmv_springmass
 
 # Default target
-all: $(BIN_DIR) $(TEST_EXEC) $(DATASET_EXEC)
+all: $(BIN_DIR) $(TEST_EXEC) $(DATASET_EXEC) $(SPRINGMASS_EXEC)
 
 # Create bin directory
 $(BIN_DIR):
@@ -36,6 +40,10 @@ $(TEST_EXEC): $(TEST_SOURCE) | $(BIN_DIR)
 
 # Rule for dataset executable
 $(DATASET_EXEC): $(DATASET_SOURCE) | $(BIN_DIR)
+	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+# Rule for spring mass executable
+$(SPRINGMASS_EXEC): $(SPRINGMASS_SOURCE) | $(BIN_DIR)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
 
 # Clean rule

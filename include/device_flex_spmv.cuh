@@ -80,7 +80,6 @@ struct DeviceFlexSpmv
         int                 num_rows,                           ///< [in] Number of rows of matrix A
         int                 num_cols,                           ///< [in] Number of columns of matrix A
         int                 num_nonzeros,                       ///< [in] Number of nonzero elements
-        int                 dimension,                          ///< [in] Dimension of the input vector x
         ValueT              alpha              = 1.0,           ///< [in] Alpha multiplicand
         ValueT              beta               = 0.0,           ///< [in] Beta addend-multiplicand
         cudaStream_t        stream             = 0,             ///< [in] CUDA stream to launch kernels within
@@ -105,8 +104,7 @@ struct DeviceFlexSpmv
         spmv_params.d_column_indices_A   = d_column_indices_A;
         spmv_params.d_column_indices_1   = d_column_indices_1;
         spmv_params.d_column_indices_2   = d_column_indices_2;
-        spmv_params.dimension            = dimension;
-
+        
         // Dispatch to our custom implementation
         return DispatchFlexSpmv<ValueT, OffsetT>::FlexDispatch(
             d_temp_storage,

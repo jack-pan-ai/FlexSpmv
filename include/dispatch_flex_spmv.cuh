@@ -292,7 +292,7 @@ struct DispatchFlexSpmv : public DispatchSpmv<ValueT, OffsetT>
             // Get the temporary storage allocation requirements
             size_t allocation_sizes[3];
             if (CubDebug(error = ScanTileStateT::AllocationSize(num_segment_fixup_tiles, allocation_sizes[0]))) break;    // bytes needed for reduce-by-key tile status descriptors
-            allocation_sizes[1] = num_merge_tiles * sizeof(KeyValuePairT);       // bytes needed for block carry-out pairs
+            allocation_sizes[1] = num_merge_tiles * sizeof(KeyValuePairT) * DIMENSION;       // bytes needed for block carry-out pairs
             allocation_sizes[2] = (num_merge_tiles + 1) * sizeof(CoordinateT);   // bytes needed for tile starting coordinates
 
             // Alias the temporary allocations from the single storage blob (or compute the necessary size of the blob)
@@ -309,7 +309,7 @@ struct DispatchFlexSpmv : public DispatchSpmv<ValueT, OffsetT>
             if (CubDebug(error = tile_state.Init(num_segment_fixup_tiles, allocations[0], allocation_sizes[0]))) break;
 
             // Alias the other allocations
-            KeyValuePairT*  d_tile_carry_pairs      = (KeyValuePairT*) allocations[1];  // Agent carry-out pairs
+            KeyValuePairT*  d_tile_carry_pairs      = (KeyValuePairT*) allocations[1];  // Agent carry-out pairs, DIMENSION * num_merge_tiles
             CoordinateT*    d_tile_coordinates      = (CoordinateT*) allocations[2];    // Agent starting coordinates
 
             // Get search/init grid dims
@@ -374,21 +374,23 @@ struct DispatchFlexSpmv : public DispatchSpmv<ValueT, OffsetT>
                     segment_fixup_grid_size.x, segment_fixup_grid_size.y, segment_fixup_grid_size.z, segment_fixup_config.block_threads, (long long) stream, segment_fixup_config.items_per_thread, segment_fixup_sm_occupancy);
 
                 // Invoke segment_fixup_kernel
-                THRUST_NS_QUALIFIER::cuda_cub::launcher::triple_chevron(
-                    segment_fixup_grid_size, segment_fixup_config.block_threads,
-                    0, stream
-                ).doit(segment_fixup_kernel,
-                    d_tile_carry_pairs,
-                    spmv_params.d_vector_y,
-                    num_merge_tiles,
-                    num_segment_fixup_tiles,
-                    tile_state);
+                for (int i = 0; i < DIMENSION; ++i) {
+                    THRUST_NS_QUALIFIER::cuda_cub::launcher::triple_chevron(
+                        segment_fixup_grid_size, segment_fixup_config.block_threads,
+                        0, stream
+                    ).doit(segment_fixup_kernel,
+                        d_tile_carry_pairs + i * num_merge_tiles,
+                        spmv_params.d_vector_y + i * spmv_params.num_rows,
+                        num_merge_tiles,
+                        num_segment_fixup_tiles,
+                        tile_state);
 
-                // Check for failure to launch
-                if (CubDebug(error = cudaPeekAtLastError())) break;
+                    // Check for failure to launch
+                    if (CubDebug(error = cudaPeekAtLastError())) break;
 
-                // Sync the stream if specified to flush runtime errors
-                if (debug_synchronous && (CubDebug(error = SyncStream(stream)))) break;
+                    // Sync the stream if specified to flush runtime errors
+                    if (debug_synchronous && (CubDebug(error = SyncStream(stream)))) break;
+                }
             }
         }
         while (0);
