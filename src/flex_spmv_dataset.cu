@@ -55,7 +55,7 @@ using namespace cub;
 #include <utils.h>
 #include <cub/util_debug.cuh>
 
-using namespace cub;
+#include "../include/merged_spmv.cuh"
 
 
 //---------------------------------------------------------------------
@@ -456,7 +456,7 @@ template <
 float TestGpuMergeCsrmv_from_scratch(
     ValueT*                         vector_y_in,
     ValueT*                         reference_vector_y_out,
-    FlexSpmvParams<ValueT, OffsetT>&    params,
+    FlexParams<ValueT, OffsetT>&    params_flex,
     int                             timing_iterations,
     float                           &setup_ms)
 {
@@ -465,32 +465,24 @@ float TestGpuMergeCsrmv_from_scratch(
     // Allocate temporary storage
     size_t temp_storage_bytes = 0;
     void *d_temp_storage = NULL;
-
+    
     // Get amount of temporary storage needed
-    CubDebugExit(DeviceFlexSpmv::CsrMV(
-        d_temp_storage, temp_storage_bytes,
-        params.d_values, params.d_column_indices_A,
-        params.d_row_end_offsets, params.d_column_indices,
-        params.d_vector_x, params.d_vector_y,
-        params.num_rows, params.num_cols, params.num_nonzeros));
+    cudaError_t error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+    CubDebugExit(error);
 
     // Allocate
     CubDebugExit(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_bytes));
 
     // Reset input/output vector y
-    CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(ValueT) * params.num_rows, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy(params_flex.d_vector_y, vector_y_in, sizeof(ValueT) * params_flex.num_rows, cudaMemcpyHostToDevice));
 
     // Warmup
-    CubDebugExit(DeviceFlexSpmv::CsrMV(
-        d_temp_storage, temp_storage_bytes,
-        params.d_values, params.d_column_indices_A,
-        params.d_row_end_offsets, params.d_column_indices,
-        params.d_vector_x, params.d_vector_y,
-        params.num_rows, params.num_cols, params.num_nonzeros));
+    error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+    CubDebugExit(error);
 
     if (!g_quiet)
     {
-        int compare = CompareDeviceResults(reference_vector_y_out, params.d_vector_y, params.num_rows, true, g_verbose);
+        int compare = CompareDeviceResults(reference_vector_y_out, params_flex.d_vector_y, params_flex.num_rows, true, g_verbose);
         printf("\t%s\n", compare ? "FAIL" : "PASS"); fflush(stdout);
     }
 
@@ -501,12 +493,8 @@ float TestGpuMergeCsrmv_from_scratch(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        CubDebugExit(DeviceFlexSpmv::CsrMV(
-            d_temp_storage, temp_storage_bytes,
-            params.d_values, params.d_column_indices_A,
-            params.d_row_end_offsets, params.d_column_indices,
-            params.d_vector_x, params.d_vector_y,
-            params.num_rows, params.num_cols, params.num_nonzeros));
+        error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+        CubDebugExit(error);
     }
     timer.Stop();
     elapsed_ms += timer.ElapsedMillis();
@@ -618,6 +606,7 @@ void RunTest(
 
     // Allocate and initialize GPU problem
     FlexSpmvParams<ValueT, OffsetT> params;
+    FlexParams<ValueT, OffsetT> params_flex;
 
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_values,          sizeof(ValueT) * csr_matrix.num_nonzeros));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets, sizeof(OffsetT) * (csr_matrix.num_rows + 1)));
@@ -630,6 +619,18 @@ void RunTest(
     params.num_nonzeros     = csr_matrix.num_nonzeros;
     params.alpha            = alpha;
     params.beta             = beta;
+    // for merged spmv from scratch
+    params_flex.d_spm_nnz          = params.d_values;
+    params_flex.d_row_end_offsets = params.d_row_end_offsets;
+    params_flex.d_column_indices  = params.d_column_indices;
+    params_flex.d_column_indices_A = params.d_column_indices_A;
+    params_flex.d_vector_x        = params.d_vector_x;
+    params_flex.d_vector_y        = params.d_vector_y;
+    params_flex.num_rows          = params.num_rows;
+    params_flex.num_cols          = params.num_cols;
+    params_flex.num_nonzeros      = params.num_nonzeros;
+    params_flex.alpha             = alpha;
+    params_flex.beta              = beta;
 
     CubDebugExit(cudaMemcpy((void*) params.d_values,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_row_end_offsets,   (void*) csr_matrix.row_offsets,     sizeof(OffsetT) * (csr_matrix.num_rows + 1), cudaMemcpyHostToDevice));
@@ -646,7 +647,7 @@ void RunTest(
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
-    avg_ms = TestGpuMergeCsrmv_from_scratch(vector_y_in, vector_y_out, params, timing_iterations, setup_ms);
+    avg_ms = TestGpuMergeCsrmv_from_scratch(vector_y_in, vector_y_out, params_flex, timing_iterations, setup_ms);
     DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
 
 

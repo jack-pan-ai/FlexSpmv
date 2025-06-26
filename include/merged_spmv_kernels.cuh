@@ -56,7 +56,7 @@ template <
     typename    SpmvPolicyT,                    ///< Parameterized SpmvPolicy tuning policy type
     typename    OffsetT,                        ///< Signed integer type for sequence offsets
     typename    CoordinateT,                    ///< Merge path coordinate type
-    typename    SpmvParamsT>                    ///< FlexSpmvParams type
+    typename    SpmvParamsT>                    ///< FlexParams type
 __global__ void SpmvSearchKernel(
     int             num_merge_tiles,            ///< [in] Number of SpMV merge tiles (spmv grid size)
     CoordinateT*    d_tile_coordinates,         ///< [out] Pointer to the temporary array of tile starting coordinates
@@ -158,8 +158,6 @@ __global__ void SegmentFixupKernel(
             AgentSegmentFixupPolicyT,
             PairsInputIteratorT,
             AggregatesOutputIteratorT,
-            cub::Equality,
-            cub::Sum,
             OffsetT>
         AgentSegmentFixupT;
 
@@ -167,7 +165,7 @@ __global__ void SegmentFixupKernel(
     __shared__ typename AgentSegmentFixupT::TempStorage temp_storage;
 
     // Process tiles
-    AgentSegmentFixupT(temp_storage, d_pairs_in, d_aggregates_out, cub::Equality(), cub::Sum()).ConsumeRange(
+    AgentSegmentFixupT(temp_storage, d_pairs_in, d_aggregates_out).ConsumeRange(
         num_items,
         num_tiles);
 }
