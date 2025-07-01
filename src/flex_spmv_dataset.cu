@@ -467,7 +467,7 @@ float TestGpuMergeCsrmv_from_scratch(
     void *d_temp_storage = NULL;
     
     // Get amount of temporary storage needed
-    cudaError_t error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+    cudaError_t error = merged::merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
     CubDebugExit(error);
 
     // Allocate
@@ -477,7 +477,7 @@ float TestGpuMergeCsrmv_from_scratch(
     CubDebugExit(cudaMemcpy(params_flex.d_vector_y, vector_y_in, sizeof(ValueT) * params_flex.num_rows, cudaMemcpyHostToDevice));
 
     // Warmup
-    error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+    error = merged::merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
     CubDebugExit(error);
 
     if (!g_quiet)
@@ -493,7 +493,7 @@ float TestGpuMergeCsrmv_from_scratch(
     timer.Start();
     for(int it = 0; it < timing_iterations; ++it)
     {
-        error = merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
+        error = merged::merged_spmv_launch<ValueT, OffsetT>(params_flex, d_temp_storage, temp_storage_bytes);
         CubDebugExit(error);
     }
     timer.Stop();
