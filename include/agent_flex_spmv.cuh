@@ -404,17 +404,17 @@ struct AgentFlexSpmv
             if (nonzero_idx < tile_num_nonzeros)
             {
                 
-                // find the row index of the dense matrix
-                OffsetT dense_matrix_idrow;
-                OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
-                #pragma unroll
-                for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
-                {
-                    if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
-                        dense_matrix_idrow = ROW_INDEX;
-                        break;
-                    }
-                }
+                // // find the row index of the dense matrix
+                // OffsetT dense_matrix_idrow;
+                // OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
+                // #pragma unroll
+                // for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
+                // {
+                //     if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
+                //         dense_matrix_idrow = ROW_INDEX;
+                //         break;
+                //     }
+                // }
 
                 OffsetT column_idx              = *ci;
                 OffsetT column_idx_A            = *ci_A;
@@ -443,17 +443,17 @@ struct AgentFlexSpmv
                 int     nonzero_idx             = threadIdx.x + (ITEM * BLOCK_THREADS);
                 nonzero_idx                     = CUB_MIN(nonzero_idx, tile_num_nonzeros - 1);
 
-                // find the row index of the dense matrix
-                OffsetT dense_matrix_idrow;
-                OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
-                #pragma unroll
-                for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
-                {
-                    if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
-                        dense_matrix_idrow = ROW_INDEX;
-                        break;
-                    }
-                }
+                // // find the row index of the dense matrix
+                // OffsetT dense_matrix_idrow;
+                // OffsetT current_id_col = tile_start_coord.y + nonzero_idx;
+                // #pragma unroll
+                // for (int ROW_INDEX = 0; ROW_INDEX < tile_num_rows + ITEMS_PER_THREAD; ++ROW_INDEX)
+                // {
+                //     if (current_id_col < s_tile_row_end_offsets[ROW_INDEX]){
+                //         dense_matrix_idrow = ROW_INDEX;
+                //         break;
+                //     }
+                // }
 
                 OffsetT column_idx              = wd_column_indices[tile_start_coord.y + nonzero_idx];
                 OffsetT column_idx_A            = wd_column_indices_A[tile_start_coord.y + nonzero_idx];

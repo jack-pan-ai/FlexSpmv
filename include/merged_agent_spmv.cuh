@@ -245,7 +245,7 @@ namespace merged
             // [code generation] here we need treat it carefully, because the dimension of the tensor is variable
             OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
             ValueT *s_tile_nonzeros = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD].nonzero;
-            ValueT *s_tile_value_vector_x = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * (DIM_INPUT_MATRIX_A)].value_vector_x;
+            ValueT *s_tile_value_vector_x = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * DIM_INPUT_MATRIX_A].value_vector_x;
 
 // Gather the row end-offsets for the merge tile into shared memory
 #pragma unroll 1
@@ -268,7 +268,7 @@ namespace merged
                 if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_MATRIX_A)
                 {
 
-                    ColumnIndicesIteratorT ci_A = wd_column_indices_A + tile_start_coord.y * DIM_INPUT_MATRIX_A + nonzero_idx;
+                    ColumnIndicesIteratorT ci_A = wd_column_indices_A + tile_start_coord.y + nonzero_idx;
                     ValueT *s = s_tile_nonzeros + nonzero_idx;
 
                     // load the nonzeros from the sparse matrix A into the shared memory
@@ -287,7 +287,7 @@ namespace merged
                 if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_VECTOR_X)
                 {
 
-                    ColumnIndicesIteratorT ci_x = wd_column_indices + tile_start_coord.y * DIM_INPUT_VECTOR_X + nonzero_idx;
+                    ColumnIndicesIteratorT ci_x = wd_column_indices + tile_start_coord.y + nonzero_idx;
                     ValueT *s_x = s_tile_value_vector_x + nonzero_idx;
 
                     // load the nonzeros from the sparse matrix A into the shared memory
@@ -308,7 +308,7 @@ namespace merged
                 {
                     ValueT *s_A_value = s_tile_nonzeros + nonzero_idx;
                     ValueT *s_x_value = s_tile_value_vector_x + nonzero_idx;
-                    ValueT result = *s_A_value * *s_x_value;
+                    ValueT result = (*s_A_value) * (*s_x_value);
                     // load the nonzeros from the sparse matrix A into the shared memory
                     *s_A_value = result; // the result is the dot product of the nonzero and the vector x
                 }
@@ -334,6 +334,11 @@ namespace merged
             CoordinateT thread_current_coord = thread_start_coord;
             TensorT scan_segment[ITEMS_PER_THREAD];
             ValueT running_total[DIM_OUTPUT_VECTOR_Y];
+            for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+            {
+                running_total[i] = 0.0;
+            }
+            
 
             OffsetT row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
             ValueT *nonzero = s_tile_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
@@ -408,7 +413,7 @@ namespace merged
                 if (scan_item.key != scan_segment[0].key)
                 {
 #pragma unroll
-                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                     {
                         s_partials[scan_item.key * DIM_OUTPUT_VECTOR_Y + i] = scan_item.values[i];
                     }
@@ -416,7 +421,7 @@ namespace merged
                 else
                 {
 #pragma unroll
-                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                     {
                         scan_segment[0].values[i] += scan_item.values[i];
                     }
@@ -428,7 +433,7 @@ namespace merged
                     if (scan_segment[ITEM - 1].key != scan_segment[ITEM].key)
                     {
 #pragma unroll
-                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                         {
                             s_partials[scan_segment[ITEM - 1].key * DIM_OUTPUT_VECTOR_Y + i] = scan_segment[ITEM - 1].values[i];
                         }
@@ -436,7 +441,7 @@ namespace merged
                     else
                     {
 #pragma unroll
-                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                         {
                             scan_segment[ITEM].values[i] += scan_segment[ITEM - 1].values[i];
                         }

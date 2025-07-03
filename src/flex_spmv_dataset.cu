@@ -638,18 +638,17 @@ void RunTest(
     CubDebugExit(cudaMemcpy((void*) params.d_column_indices_A,  (void*) csr_matrix.column_indices_A, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_vector_x,          (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols, cudaMemcpyHostToDevice));
 
-	// Merge-based
-    if (!g_quiet) printf("\n\n");
-    printf("Merge-based CsrMV, "); fflush(stdout);
-    avg_ms = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations, setup_ms);
-    DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
-
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
     avg_ms = TestGpuMergeCsrmv_from_scratch(vector_y_in, vector_y_out, params_flex, timing_iterations, setup_ms);
     DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
-
+    
+    // Merge-based
+    if (!g_quiet) printf("\n\n");
+    printf("Merge-based CsrMV, "); fflush(stdout);
+    avg_ms = TestGpuMergeCsrmv(vector_y_in, vector_y_out, params, timing_iterations, setup_ms);
+    DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);
 
     // // Initialize cuSparse (deprecated)
     // cusparseHandle_t cusparse;

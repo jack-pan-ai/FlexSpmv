@@ -206,6 +206,9 @@ namespace merged
             using CoordinateT = typename cub::CubVector<OffsetT, 2>::Type;
             using SpmvParamsT = FlexParams<ValueT, OffsetT>;
 
+            // [INFO] the row_end_offsets is shifted by 1,
+            spmv_params.d_row_end_offsets = spmv_params.d_row_end_offsets + 1;
+
             error = merged_spmv_dispatch(spmv_params, d_temp_storage, temp_storage_bytes,
                                          SpmvSearchKernel<PtxSpmvPolicyT, OffsetT, CoordinateT, SpmvParamsT>,
                                          SpmvKernel<PtxSpmvPolicyT, ValueT, OffsetT, CoordinateT, TensorT, SpmvParamsT, false, false>,

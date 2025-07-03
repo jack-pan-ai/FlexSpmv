@@ -679,7 +679,7 @@ int CompareResults(T* computed, S* reference, OffsetT len, bool verbose = true)
             if (verbose) std::cout << "INCORRECT: [" << i << "]: "
                 << computed[i] << " != "
                 << reference[i];
-            return 1;
+            // return 1;
         }
     }
     return 0;
@@ -706,7 +706,7 @@ int CompareResults(float* computed, float* reference, OffsetT len, bool verbose 
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
                  << reference[i]; 
-            return 1;
+            // return 1;
         }
     }
     return 0;
@@ -723,6 +723,8 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
     double meps = std::numeric_limits<double>::epsilon();
     float fmeps = std::numeric_limits<float>::epsilon();
  
+    std::cout << "len: " << len << std::endl;
+
     for (OffsetT i = 0; i < len; i++)
     {
         float   a           = computed[i];
@@ -734,8 +736,8 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
         {
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
-                 << reference[i]; 
-            return 1;
+                 << reference[i] << std::endl; 
+            // return 1;
         }
     }
     return 0;

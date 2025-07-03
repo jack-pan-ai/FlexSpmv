@@ -720,7 +720,8 @@ struct CsrMatrix
             prev_row = current_row;
 
             column_indices[current_nz]    = coo_matrix.coo_tuples[current_nz].col;
-            column_indices_A[current_nz]   = coo_matrix.coo_tuples[current_nz].col;
+            // column_indices_A[current_nz]   = coo_matrix.coo_tuples[current_nz].col;
+            column_indices_A[current_nz]   = current_nz;
             values[current_nz]            = coo_matrix.coo_tuples[current_nz].val;
         }
 
