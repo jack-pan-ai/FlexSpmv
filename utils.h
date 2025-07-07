@@ -706,7 +706,7 @@ int CompareResults(float* computed, float* reference, OffsetT len, bool verbose 
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
                  << reference[i]; 
-            // return 1;
+            return 1;
         }
     }
     return 0;
@@ -737,7 +737,7 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
                  << reference[i] << std::endl; 
-            // return 1;
+            return 1;
         }
     }
     return 0;

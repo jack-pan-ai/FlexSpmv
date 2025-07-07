@@ -44,6 +44,7 @@
 #include <list>
 #include <fstream>
 #include <stdio.h>
+#include <random>
 
 #ifdef CUB_MKL
     #include <numa.h>
@@ -51,6 +52,10 @@
 #endif
 
 using namespace std;
+
+std::random_device rd;
+std::mt19937 gen(rd());
+std::uniform_int_distribution<> dis(0, 1000000);
 
 /******************************************************************************
  * Graph stats
@@ -204,7 +209,7 @@ struct CooMatrix
             for (OffsetT nonzero = csr_matrix.row_offsets[row]; nonzero < csr_matrix.row_offsets[row + 1]; ++nonzero)
             {
                 coo_tuples[nonzero].row = relabel_indices[row];
-                coo_tuples[nonzero].col = relabel_indices[csr_matrix.column_indices[nonzero]];
+                coo_tuples[nonzero].col = relabel_indices[csr_matrix.column_indices_i[nonzero]];
                 coo_tuples[nonzero].val = csr_matrix.values[nonzero];
             }
         }
@@ -646,8 +651,10 @@ struct CsrMatrix
     OffsetT     num_cols;
     OffsetT     num_nonzeros;
     OffsetT*    row_offsets;
-    OffsetT*    column_indices;
-    OffsetT*    column_indices_A;
+    OffsetT*    column_indices_i;
+    OffsetT*    column_indices_j;
+    OffsetT*    column_indices_k;
+    OffsetT*    column_indices_l;
     ValueT*     values;
 
 
@@ -684,11 +691,13 @@ struct CsrMatrix
             numa_set_strict(1);
 
             row_offsets     = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * (num_rows + 1), 0);
-            column_indices  = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
-            column_indices_A = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
+            column_indices_i = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
+            column_indices_j = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
+            column_indices_k = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
+            column_indices_l = (OffsetT*) numa_alloc_onnode(sizeof(OffsetT) * num_nonzeros, 0);
 
             if (numa_num_task_nodes() > 1)
-                values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 1);    // put on different socket than column_indices
+                values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 1);    // put on different socket than column_indices_i
             else
                 values          = (ValueT*) numa_alloc_onnode(sizeof(ValueT) * num_nonzeros, 0);
         }
@@ -696,14 +705,18 @@ struct CsrMatrix
         {
             values          = (ValueT*) mkl_malloc(sizeof(ValueT) * num_nonzeros, 4096);
             row_offsets     = (OffsetT*) mkl_malloc(sizeof(OffsetT) * (num_rows + 1), 4096);
-            column_indices  = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
-            column_indices_A = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
+            column_indices_i = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
+            column_indices_j = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
+            column_indices_k = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
+            column_indices_l = (OffsetT*) mkl_malloc(sizeof(OffsetT) * num_nonzeros, 4096);
         }
 
 #else
         row_offsets     = new OffsetT[num_rows + 1];
-        column_indices  = new OffsetT[num_nonzeros];
-        column_indices_A = new OffsetT[num_nonzeros];
+        column_indices_i = new OffsetT[num_nonzeros];
+        column_indices_j = new OffsetT[num_nonzeros];
+        column_indices_k = new OffsetT[num_nonzeros];
+        column_indices_l = new OffsetT[num_nonzeros];
         values          = new ValueT[num_nonzeros];
 #endif
 
@@ -719,9 +732,12 @@ struct CsrMatrix
             }
             prev_row = current_row;
 
-            column_indices[current_nz]    = coo_matrix.coo_tuples[current_nz].col;
-            // column_indices_A[current_nz]   = coo_matrix.coo_tuples[current_nz].col;
-            column_indices_A[current_nz]   = current_nz;
+            column_indices_i[current_nz]    = coo_matrix.coo_tuples[current_nz].col;
+            do {
+                column_indices_j[current_nz] = dis(gen) % num_cols; // random number between 0 and num_cols
+            } while (column_indices_j[current_nz] == column_indices_i[current_nz]); // ensure i and j are different
+            column_indices_k[current_nz]    = current_nz;
+            column_indices_l[current_nz]    = current_nz;
             values[current_nz]            = coo_matrix.coo_tuples[current_nz].val;
         }
 
@@ -743,27 +759,35 @@ struct CsrMatrix
         {
             numa_free(row_offsets, sizeof(OffsetT) * (num_rows + 1));
             numa_free(values, sizeof(ValueT) * num_nonzeros);
-            numa_free(column_indices, sizeof(OffsetT) * num_nonzeros);
-            numa_free(column_indices_A, sizeof(OffsetT) * num_nonzeros);
+            numa_free(column_indices_i, sizeof(OffsetT) * num_nonzeros);
+            numa_free(column_indices_j, sizeof(OffsetT) * num_nonzeros);
+            numa_free(column_indices_k, sizeof(OffsetT) * num_nonzeros);
+            numa_free(column_indices_l, sizeof(OffsetT) * num_nonzeros);
         }
         else
         {
             if (row_offsets)    mkl_free(row_offsets);
-            if (column_indices) mkl_free(column_indices);
-            if (column_indices_A) mkl_free(column_indices_A);
+            if (column_indices_i) mkl_free(column_indices_i);
+            if (column_indices_j) mkl_free(column_indices_j);
+            if (column_indices_k) mkl_free(column_indices_k);
+            if (column_indices_l) mkl_free(column_indices_l);
             if (values)         mkl_free(values);
         }
 
 #else
         if (row_offsets)    delete[] row_offsets;
-        if (column_indices) delete[] column_indices;
-        if (column_indices_A) delete[] column_indices_A;
+        if (column_indices_i) delete[] column_indices_i;
+        if (column_indices_j) delete[] column_indices_j;
+        if (column_indices_k) delete[] column_indices_k;
+        if (column_indices_l) delete[] column_indices_l;
         if (values)         delete[] values;
 #endif
 
         row_offsets = NULL;
-        column_indices = NULL;
-        column_indices_A = NULL;
+        column_indices_i = NULL;
+        column_indices_j = NULL;
+        column_indices_k = NULL;
+        column_indices_l = NULL;
         values = NULL;
 
     }
@@ -814,7 +838,7 @@ struct CsrMatrix
 
             for (int nz_idx = nz_idx_start; nz_idx < nz_idx_end; ++nz_idx)
             {
-                OffsetT col             = column_indices[nz_idx];
+                OffsetT col             = column_indices_i[nz_idx];
                 double x                = (col > row) ? col - row : row - col;
 
                 samples++;
@@ -841,7 +865,7 @@ struct CsrMatrix
 
             for (int nz_idx = nz_idx_start; nz_idx < nz_idx_end; ++nz_idx)
             {
-                OffsetT col             = column_indices[nz_idx];
+                OffsetT col             = column_indices_i[nz_idx];
 
                 samples++;
                 double x                = col;
@@ -869,7 +893,7 @@ struct CsrMatrix
 
             for (int nz_idx = nz_idx_start; nz_idx < nz_idx_end; ++nz_idx)
             {
-                OffsetT col             = column_indices[nz_idx];
+                OffsetT col             = column_indices_i[nz_idx];
 
                 samples++;
                 double x                = col;
@@ -976,7 +1000,7 @@ struct CsrMatrix
             printf("%d [@%d, #%d]: ", row, row_offsets[row], row_offsets[row + 1] - row_offsets[row]);
             for (OffsetT col_offset = row_offsets[row]; col_offset < row_offsets[row + 1]; col_offset++)
             {
-                printf("%d (%f), ", column_indices[col_offset], values[col_offset]);
+                printf("%d (%f), ", column_indices_i[col_offset], values[col_offset]);
             }
             printf("\n");
         }

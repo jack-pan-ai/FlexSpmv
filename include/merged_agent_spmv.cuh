@@ -167,7 +167,9 @@ namespace merged
                 // 3. value_vector_x (result of the dot product will be reused in side nonzeros)
                 // Dimension will vary for each of them
                 // TILE_ITEMS is the number of item for result y, without considering the dimension of the tensor
-                MergeItem merge_items[(ITEMS_PER_THREAD + TILE_ITEMS) * (DIM_INPUT_VECTOR_X + DIM_INPUT_MATRIX_A) + 1];
+                // MergeItem merge_items[(ITEMS_PER_THREAD + TILE_ITEMS) * (DIM_INPUT_VECTOR_X * NUM_INPUT_VECTOR_X + DIM_INPUT_MATRIX_A * NUM_INPUT_MATRIX_A) + 1];
+                MergeItem merge_items[TILE_ITEMS];
+                // OffsetT row_end_offset[TILE_ITEMS];
 
                 // Smem needed for block exchange
                 typename BlockExchangeT::TempStorage exchange;
@@ -197,12 +199,14 @@ namespace merged
         FlexParams<ValueT, OffsetT> &spmv_params;
 
         RowOffsetsIteratorT wd_row_end_offsets;   ///< Wrapped Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-        ColumnIndicesIteratorT wd_column_indices; ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+        ColumnIndicesIteratorT wd_column_indices_i; ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+        ColumnIndicesIteratorT wd_column_indices_j; ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
         VectorValueIteratorT wd_vector_x;         ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
         VectorValueIteratorT wd_vector_y;         ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
 
         // <Wrapped pointer to the array of indexing A>
-        ColumnIndicesIteratorT wd_column_indices_A; ///< Wrapped pointer to column indices for matrix A
+        ColumnIndicesIteratorT wd_column_indices_k; ///< Wrapped pointer to column indices for matrix A
+        ColumnIndicesIteratorT wd_column_indices_l; ///< Wrapped pointer to column indices for matrix A
         SpmValueIteratorT wd_spm_nnz;       ///< Wrapped pointer to sparse matrix A
 
         //---------------------------------------------------------------------
@@ -219,8 +223,10 @@ namespace merged
             : temp_storage(temp_storage.Alias()),
               spmv_params(spmv_params),
               wd_row_end_offsets(spmv_params.d_row_end_offsets),
-              wd_column_indices(spmv_params.d_column_indices),
-              wd_column_indices_A(spmv_params.d_column_indices_A),
+              wd_column_indices_i(spmv_params.d_column_indices_i),
+              wd_column_indices_j(spmv_params.d_column_indices_j),
+              wd_column_indices_k(spmv_params.d_column_indices_k),
+              wd_column_indices_l(spmv_params.d_column_indices_l),
               wd_spm_nnz(spmv_params.d_spm_nnz),
               wd_vector_x(spmv_params.d_vector_x),
               wd_vector_y(spmv_params.d_vector_y)
@@ -243,9 +249,18 @@ namespace merged
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
             // [code generation] here we need treat it carefully, because the dimension of the tensor is variable
+            // OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            // ValueT *s_tile_k_ij = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD].nonzero;
+            // ValueT *s_tile_l_ij = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * DIM_INPUT_MATRIX_A].nonzero;
+            // ValueT *s_tile_value_vector_ri = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * DIM_INPUT_MATRIX_A * NUM_INPUT_MATRIX_A].value_vector_x;
+            // ValueT *s_tile_value_vector_rj = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * DIM_INPUT_MATRIX_A * NUM_INPUT_MATRIX_A + DIM_INPUT_VECTOR_X * TILE_ITEMS].value_vector_x;
+
+            // [code generation] shared memory reused is disabled 
             OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
-            ValueT *s_tile_nonzeros = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD].nonzero;
-            ValueT *s_tile_value_vector_x = &temp_storage.aliasable.merge_items[tile_num_rows + ITEMS_PER_THREAD + TILE_ITEMS * DIM_INPUT_MATRIX_A].value_vector_x;
+            __shared__ ValueT s_tile_k_ij[TILE_ITEMS * DIM_INPUT_MATRIX_A];
+            __shared__ ValueT s_tile_l_ij[TILE_ITEMS * DIM_INPUT_MATRIX_A];
+            __shared__ ValueT s_tile_value_vector_ri[TILE_ITEMS * DIM_INPUT_VECTOR_X];
+            __shared__ ValueT s_tile_value_vector_rj[TILE_ITEMS * DIM_INPUT_VECTOR_X];
 
 // Gather the row end-offsets for the merge tile into shared memory
 #pragma unroll 1
@@ -259,6 +274,7 @@ namespace merged
 
             CTA_SYNC();
 
+// Select
 // Gather the nonzeros for the merge tile into shared memory
 #pragma unroll
             for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_MATRIX_A; ++ITEM)
@@ -268,11 +284,29 @@ namespace merged
                 if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_MATRIX_A)
                 {
 
-                    ColumnIndicesIteratorT ci_A = wd_column_indices_A + tile_start_coord.y + nonzero_idx;
-                    ValueT *s = s_tile_nonzeros + nonzero_idx;
+                    ColumnIndicesIteratorT ci_k = wd_column_indices_k + tile_start_coord.y + nonzero_idx;
+                    ValueT *s_k = s_tile_k_ij + nonzero_idx;
 
                     // load the nonzeros from the sparse matrix A into the shared memory
-                    *s = wd_spm_nnz[*ci_A];
+                    *s_k = wd_spm_nnz[*ci_k];
+                }
+            }
+
+            CTA_SYNC();
+
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_MATRIX_A; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+
+                if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_MATRIX_A)
+                {
+
+                    ColumnIndicesIteratorT ci_l = wd_column_indices_l + tile_start_coord.y + nonzero_idx;
+                    ValueT *s_l = s_tile_l_ij + nonzero_idx;
+
+                    // load the nonzeros from the sparse matrix A into the shared memory
+                    *s_l = wd_spm_nnz[*ci_l];
                 }
             }
 
@@ -280,40 +314,128 @@ namespace merged
 
 // Gather the vector x for the merge tile into shared memory
 #pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+
+                if (nonzero_idx < tile_num_nonzeros)
+                {
+
+                    ColumnIndicesIteratorT ci_x = wd_column_indices_i + tile_start_coord.y + nonzero_idx;
+
+                    // load the nonzeros from the sparse matrix A into the shared memory
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        ValueT *s_ri = s_tile_value_vector_ri + nonzero_idx * DIM_INPUT_VECTOR_X + i;
+                        *s_ri = wd_vector_x[*ci_x * DIM_INPUT_VECTOR_X + i];
+                    }
+                }
+            }
+
+            CTA_SYNC();
+
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+
+                if (nonzero_idx < tile_num_nonzeros)
+                {
+
+                    ColumnIndicesIteratorT ci_j = wd_column_indices_j + tile_start_coord.y + nonzero_idx;
+
+                    // load the nonzeros from the sparse matrix A into the shared memory
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx * DIM_INPUT_VECTOR_X + i;
+                        *s_rj = wd_vector_x[*ci_j * DIM_INPUT_VECTOR_X + i];
+                    }
+                }
+            }
+
+            CTA_SYNC();
+
+// Map
+// compute the dot product of the nonzeros from the sparse matrix A and the vector x and store the result in the shared memory
+// this case is very special case where DIM_OUTPUT_VECTOR_Y=DIM_INPUT_MATRIX_A=DIM_INPUT_VECTOR_X
+
+// 1. r_ij = r_i - r_j, r_i is used as r_ij
+#pragma unroll
             for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_VECTOR_X; ++ITEM)
             {
                 int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
 
                 if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_VECTOR_X)
                 {
-
-                    ColumnIndicesIteratorT ci_x = wd_column_indices + tile_start_coord.y + nonzero_idx;
-                    ValueT *s_x = s_tile_value_vector_x + nonzero_idx;
-
-                    // load the nonzeros from the sparse matrix A into the shared memory
-                    *s_x = wd_vector_x[*ci_x];
-                }
+                    ValueT *s_ri = s_tile_value_vector_ri + nonzero_idx;
+                    ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx;
+                    ValueT s_r_ij = *s_ri - *s_rj; // r_ij = r_i - r_j,
+                    *s_ri = s_r_ij;
+                }   
             }
-
             CTA_SYNC();
-
-// compute the dot product of the nonzeros from the sparse matrix A and the vector x and store the result in the shared memory
-// this case is very special case where DIM_OUTPUT_VECTOR_Y=DIM_INPUT_MATRIX_A=DIM_INPUT_VECTOR_X
-#pragma unroll
-            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_OUTPUT_VECTOR_Y; ++ITEM)
+// 2. norm_ij = sqrt(r_ij[:] * r_ij[:]) (bank conflict happens), r_j is used as norm_ij
+#pragma unroll 
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
             {
                 int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
 
-                if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_MATRIX_A)
+                if (nonzero_idx < tile_num_nonzeros)
                 {
-                    ValueT *s_A_value = s_tile_nonzeros + nonzero_idx;
-                    ValueT *s_x_value = s_tile_value_vector_x + nonzero_idx;
-                    ValueT result = (*s_A_value) * (*s_x_value);
-                    // load the nonzeros from the sparse matrix A into the shared memory
-                    *s_A_value = result; // the result is the dot product of the nonzero and the vector x
+                    ValueT *s_ri = s_tile_value_vector_ri + nonzero_idx * DIM_INPUT_VECTOR_X;
+                    ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx;
+                    ValueT s_r_ij_norm = 0.0;
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        s_r_ij_norm += s_ri[i] * s_ri[i];
+                    }
+                    s_r_ij_norm = sqrt(s_r_ij_norm);
+                    *s_rj = s_r_ij_norm;
                 }
             }
+            CTA_SYNC();
 
+// 3. unit_ij = r_ij / norm_ij, r_i is used as unit_ij
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_VECTOR_X; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+                if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_VECTOR_X)
+                {
+                    ValueT *s_ri = s_tile_value_vector_ri + nonzero_idx; // r_i is used as unit_ij
+                    ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx / DIM_INPUT_VECTOR_X; // r_j is used as norm_ij
+                    *s_ri = *s_ri / *s_rj;
+                }
+            }
+            CTA_SYNC();
+
+// 4. mass = - (norm_ij - l_ij[0]) * k_ij[0], r_j is used as mass
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_MATRIX_A; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+                if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_MATRIX_A)
+                {
+                    ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx; // r_j is used as norm_ij  
+                    ValueT *s_k = s_tile_k_ij + nonzero_idx;
+                    ValueT *s_l = s_tile_l_ij + nonzero_idx;
+                    *s_rj = - (*s_rj - *s_l) * *s_k; // mass = - (norm_ij - l_ij[0]) * k_ij[0]
+                }
+            }
+            CTA_SYNC();
+
+// 5. r_ij = unit_ij * mass, r_i is used as r_ij
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD * DIM_INPUT_VECTOR_X; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+                if (nonzero_idx < tile_num_nonzeros * DIM_INPUT_VECTOR_X)
+                {
+                    ValueT *s_ri = s_tile_value_vector_ri + nonzero_idx; // r_i is used as r_ij
+                    ValueT *s_rj = s_tile_value_vector_rj + nonzero_idx / DIM_INPUT_VECTOR_X; // r_j is used as mass
+                    *s_ri = *s_ri * *s_rj; // r_ij = unit_ij * mass
+                }
+            }
             CTA_SYNC();
 
             // Search for the thread's starting coordinate within the merge tile
@@ -341,8 +463,9 @@ namespace merged
             
 
             OffsetT row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
-            ValueT *nonzero = s_tile_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+            ValueT *nonzero = s_tile_value_vector_ri + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
 
+// Reduce
 #pragma unroll
             for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
             {
@@ -356,7 +479,7 @@ namespace merged
                         running_total[i] += nonzero[i];
                     }
                     ++thread_current_coord.y;
-                    nonzero = s_tile_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+                    nonzero = s_tile_value_vector_ri + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
                 }
                 else
                 {

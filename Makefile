@@ -18,33 +18,19 @@ INCLUDES := -I. -I.. -Iinclude
 INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files and their corresponding executables
-TEST_SOURCE := src/flex_spmv_test.cu
-TEST_EXEC := $(BIN_DIR)/flex_spmv_test
 
-DATASET_SOURCE := src/flex_spmv_dataset.cu
-DATASET_EXEC := $(BIN_DIR)/flex_spmv_datasets
-
-# SPRINGMASS_SOURCE := src/flex_spmv_springmass.cu
-# SPRINGMASS_EXEC := $(BIN_DIR)/flex_spmv_springmass
+SPRINGMASS_SOURCE := src/flex_spmv_springmass.cu
+SPRINGMASS_EXEC := $(BIN_DIR)/flex_spmv_springmass
 
 # Header files that might be included
 HEADER_FILES := $(wildcard include/*.cuh) $(wildcard include/*.h) $(wildcard *.h)
 
 # Default target
-all: $(BIN_DIR) $(TEST_EXEC) $(DATASET_EXEC) $(SPRINGMASS_EXEC)
+all: $(BIN_DIR) $(SPRINGMASS_EXEC)
 
 # Create bin directory
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
-
-# Rule for test executable with header dependencies
-$(TEST_EXEC): $(TEST_SOURCE) $(HEADER_FILES) | $(BIN_DIR)
-	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
-
-# Rule for dataset executable with header dependencies
-$(DATASET_EXEC): $(DATASET_SOURCE) $(HEADER_FILES) | $(BIN_DIR)
-	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
-
 # Rule for spring mass executable with header dependencies
 $(SPRINGMASS_EXEC): $(SPRINGMASS_SOURCE) $(HEADER_FILES) | $(BIN_DIR)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
