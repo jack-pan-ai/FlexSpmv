@@ -7,6 +7,7 @@
 #define NUM_INPUT_VECTOR_X 2    // Number of input vector x, involed in mapping in the shared memory for GPUs
 #define NUM_INPUT_MATRIX_A 2    // Number of input matrix A, involved in mapping in the shared memory for GPUs
 
+
 template <typename OffsetT, typename ValueT, int Dim>
 struct Tensor
 {

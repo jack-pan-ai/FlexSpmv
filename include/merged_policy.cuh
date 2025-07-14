@@ -72,7 +72,8 @@ namespace merged
             cub::LOAD_DEFAULT,
             cub::LOAD_DEFAULT,
             cub::LOAD_DEFAULT,
-            false,
+            // false, // INDIRECT_LOAD_NONZEROS
+            true, // DIRECT_LOAD_NONZEROS
             cub::BLOCK_SCAN_WARP_SCANS>
             SpmvPolicyT;
 

@@ -586,6 +586,255 @@ namespace merged
         }
 
         /**
+         * Consume a merge tile, specialized for direct load of nonzeros
+         */
+        __device__ __forceinline__ TensorT ConsumeTile(
+            int tile_idx,
+            CoordinateT tile_start_coord,
+            CoordinateT tile_end_coord,
+            Int2Type<true> is_direct_load) ///< Marker type indicating whether to load nonzeros directly during path-discovery or beforehand in batch
+        {
+            int tile_num_rows = tile_end_coord.x - tile_start_coord.x;
+            int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
+
+            // [code generation] shared memory reused is disabled 
+            OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            __shared__ ValueT s_tile_value_nonzeros[TILE_ITEMS * DIM_INPUT_VECTOR_X];
+
+// Gather the row end-offsets for the merge tile into shared memory
+#pragma unroll 1
+            for (int item = threadIdx.x; item < tile_num_rows + ITEMS_PER_THREAD; item += BLOCK_THREADS)
+            {
+                const OffsetT offset =
+                    (cub::min)(static_cast<OffsetT>(tile_start_coord.x + item),
+                               static_cast<OffsetT>(spmv_params.num_rows - 1));
+                s_tile_row_end_offsets[item] = wd_row_end_offsets[offset];
+            }
+
+            CTA_SYNC();
+
+// Select
+// Gather the nonzeros for the merge tile into shared memory
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
+            {
+                int nonzero_idx = threadIdx.x + (ITEM * BLOCK_THREADS);
+
+                if (nonzero_idx < tile_num_nonzeros)
+                {
+                    // load the nonzeros from the sparse matrix A into the shared memory
+                    ColumnIndicesIteratorT ci_k = wd_column_indices_k + tile_start_coord.y + nonzero_idx;
+                    ColumnIndicesIteratorT ci_l = wd_column_indices_l + tile_start_coord.y + nonzero_idx;
+                    //load vectors x_i and x_j
+                    ColumnIndicesIteratorT ci_x = wd_column_indices_i + tile_start_coord.y + nonzero_idx;
+                    ColumnIndicesIteratorT ci_y = wd_column_indices_j + tile_start_coord.y + nonzero_idx;
+
+                    ValueT k_ij = wd_spm_nnz[*ci_k];
+                    ValueT l_ij = wd_spm_nnz[*ci_l];
+                    TensorT x_i;
+                    TensorT x_j;
+
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        x_i.values[i] = wd_vector_x[*ci_x * DIM_INPUT_VECTOR_X + i];
+                    }
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        x_j.values[i] = wd_vector_x[*ci_y * DIM_INPUT_VECTOR_X + i];
+                    }
+
+                    // map
+                    // 1. r_ij = r_i - r_j, r_i is used as r_ij
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        x_i.values[i] = x_i.values[i] - x_j.values[i];
+                    }
+                    // 2. norm_ij = sqrt(r_ij[:] * r_ij[:]), r_j is used as norm_ij
+                    ValueT norm_ij = 0.0;
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        norm_ij += x_i.values[i] * x_i.values[i];
+                    }
+                    norm_ij = sqrt(norm_ij);
+                    // 3. unit_ij = r_ij / norm_ij, r_i is used as unit_ij
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        x_i.values[i] = x_i.values[i] / norm_ij;
+                    }
+                    // 4. mass = - (norm_ij - l_ij[0]) * k_ij[0], norm_ij is used as mass
+                    norm_ij = - (norm_ij - l_ij) * k_ij;
+                    // 5. r_ij = unit_ij * mass, r_i is used as r_ij
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        x_i.values[i] = x_i.values[i] * norm_ij;
+                    }
+                    // store the r_ij into the shared memory
+                    #pragma unroll
+                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
+                    {
+                        s_tile_value_nonzeros[nonzero_idx * DIM_INPUT_VECTOR_X + i] = x_i.values[i];
+                    }
+                }
+            }
+
+            CTA_SYNC();
+
+            // Search for the thread's starting coordinate within the merge tile
+            CountingInputIterator<OffsetT> tile_nonzero_indices(tile_start_coord.y);
+            CoordinateT thread_start_coord;
+
+            MergePathSearch(
+                OffsetT(threadIdx.x * ITEMS_PER_THREAD), // Diagonal
+                s_tile_row_end_offsets,                  // List A
+                tile_nonzero_indices,                    // List B
+                tile_num_rows,
+                tile_num_nonzeros,
+                thread_start_coord);
+
+            CTA_SYNC(); // Perf-sync
+
+            // Compute the thread's merge path segment
+            CoordinateT thread_current_coord = thread_start_coord;
+            TensorT scan_segment[ITEMS_PER_THREAD];
+            ValueT running_total[DIM_OUTPUT_VECTOR_Y];
+            for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+            {
+                running_total[i] = 0.0;
+            }
+            
+
+            OffsetT row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
+            ValueT *nonzero = s_tile_value_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+
+// Reduce
+#pragma unroll
+            for (int ITEM = 0; ITEM < ITEMS_PER_THREAD; ++ITEM)
+            {
+                if (tile_nonzero_indices[thread_current_coord.y] < row_end_offset)
+                {
+// Move down (accumulate)
+#pragma unroll
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                    {
+                        scan_segment[ITEM].values[i] = nonzero[i];
+                        running_total[i] += nonzero[i];
+                    }
+                    ++thread_current_coord.y;
+                    nonzero = s_tile_value_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+                }
+                else
+                {
+// Move right (reset)
+#pragma unroll
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                    {
+                        scan_segment[ITEM].values[i] = 0.0;
+                        running_total[i] = 0.0;
+                    }
+                    ++thread_current_coord.x;
+                    row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
+                }
+
+                scan_segment[ITEM].key = thread_current_coord.x;
+            }
+
+            CTA_SYNC();
+
+            // Block-wide reduce-value-by-segment
+            TensorT tile_carry;
+            ReduceBySegmentOpT scan_op;
+            TensorT scan_item;
+
+#pragma unroll
+            for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+            {
+                scan_item.values[i] = running_total[i];
+            }
+            scan_item.key = thread_current_coord.x;
+
+            BlockScanT(temp_storage.aliasable.scan).ExclusiveScan(scan_item, scan_item, scan_op, tile_carry);
+
+            if (threadIdx.x == 0)
+            {
+                scan_item.key = thread_start_coord.x;
+#pragma unroll
+                for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                {
+                    scan_item.values[i] = 0.0;
+                }
+            }
+
+            if (tile_num_rows > 0)
+            {
+
+                CTA_SYNC();
+
+                // Scan downsweep and scatter
+                // memory reuse for the partial results
+                // random access for the partial results (bank conflict may happen)
+                ValueT *s_partials = &temp_storage.aliasable.merge_items[0].nonzero;
+
+                if (scan_item.key != scan_segment[0].key)
+                {
+#pragma unroll
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
+                    {
+                        s_partials[scan_item.key * DIM_OUTPUT_VECTOR_Y + i] = scan_item.values[i];
+                    }
+                }
+                else
+                {
+#pragma unroll
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
+                    {
+                        scan_segment[0].values[i] += scan_item.values[i];
+                    }
+                }
+
+#pragma unroll
+                for (int ITEM = 1; ITEM < ITEMS_PER_THREAD; ++ITEM)
+                {
+                    if (scan_segment[ITEM - 1].key != scan_segment[ITEM].key)
+                    {
+#pragma unroll
+                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
+                        {
+                            s_partials[scan_segment[ITEM - 1].key * DIM_OUTPUT_VECTOR_Y + i] = scan_segment[ITEM - 1].values[i];
+                        }
+                    }
+                    else
+                    {
+#pragma unroll
+                        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
+                        {
+                            scan_segment[ITEM].values[i] += scan_segment[ITEM - 1].values[i];
+                        }
+                    }
+                }
+
+                CTA_SYNC();
+
+// memory coalescing for writing the output vector y
+#pragma unroll 1
+                for (int item = threadIdx.x; item < tile_num_rows * DIM_OUTPUT_VECTOR_Y; item += BLOCK_THREADS)
+                {
+                    spmv_params.d_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item] = s_partials[item];
+                }
+            }
+
+            // Return the tile's running carry-out
+            return tile_carry;
+        }
+
+
+
+        /**
          * Process a merge tile
          */
         __device__ __forceinline__ void ConsumeTile(
@@ -634,7 +883,7 @@ namespace merged
                 tile_idx,
                 tile_start_coord,
                 tile_end_coord,
-                Int2Type<false>()); // PTX >=520 use the indirect load of nonzeros
+                Int2Type<AgentSpmvPolicyT::DIRECT_LOAD_NONZEROS>()); // PTX >=520 use the indirect load of nonzeros
 
             // Output the tile's carry-out
             if (threadIdx.x == 0)

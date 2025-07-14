@@ -701,7 +701,7 @@ int CompareResults(float* computed, float* reference, OffsetT len, bool verbose 
         int     int_diff    = std::abs(*(int*)&a - *(int*)&b);
         float   sqrt_diff   = sqrt(float(int_diff));
 
-        if (sqrt_diff > len * 100)      
+        if (sqrt_diff > len)      
         {
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
@@ -732,7 +732,7 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
         int     int_diff    = std::abs(*(int*)&a - *(int*)&b);
         float   sqrt_diff   = sqrt(float(int_diff));
 
-        if (sqrt_diff > len * 100)      
+        if (sqrt_diff > len)      
         {
             if (verbose) std::cout << "INCORRECT (sqrt_diff: " << sqrt_diff << "): [" << i << "]: "
                  << computed[i] << " != "
