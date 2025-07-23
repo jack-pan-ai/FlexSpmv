@@ -678,7 +678,8 @@ namespace merged
                     #pragma unroll
                     for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
                     {
-                        s_tile_value_nonzeros[nonzero_idx * DIM_INPUT_VECTOR_X + i] = x_i.values[i];
+                        // s_tile_value_nonzeros[nonzero_idx * DIM_INPUT_VECTOR_X + i] = x_i.values[i];
+                        s_tile_value_nonzeros[nonzero_idx + i * TILE_ITEMS] = x_i.values[i];
                     }
                 }
             }
@@ -710,7 +711,8 @@ namespace merged
             
 
             OffsetT row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
-            ValueT *nonzero = s_tile_value_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+            // ValueT *nonzero = s_tile_value_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+            ValueT *nonzero = s_tile_value_nonzeros + thread_current_coord.y;
 
 // Reduce
 #pragma unroll
@@ -722,11 +724,11 @@ namespace merged
 #pragma unroll
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
                     {
-                        scan_segment[ITEM].values[i] = nonzero[i];
-                        running_total[i] += nonzero[i];
+                        scan_segment[ITEM].values[i] = nonzero[i * TILE_ITEMS];
+                        running_total[i] += nonzero[i * TILE_ITEMS];
                     }
                     ++thread_current_coord.y;
-                    nonzero = s_tile_value_nonzeros + thread_current_coord.y * DIM_OUTPUT_VECTOR_Y;
+                    nonzero = s_tile_value_nonzeros + thread_current_coord.y;
                 }
                 else
                 {
@@ -776,16 +778,17 @@ namespace merged
                 CTA_SYNC();
 
                 // Scan downsweep and scatter
-                // memory reuse for the partial results
-                // random access for the partial results (bank conflict may happen)
-                ValueT *s_partials = &temp_storage.aliasable.merge_items[0].nonzero;
+                // memory reuse for the partial results 
+                // TILE_ITEMS is used to avoid bank conflict
+                // ValueT *s_partials = &temp_storage.aliasable.merge_items[0].nonzero;
+                ValueT *s_partials = s_tile_value_nonzeros;
 
                 if (scan_item.key != scan_segment[0].key)
                 {
 #pragma unroll
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                     {
-                        s_partials[scan_item.key * DIM_OUTPUT_VECTOR_Y + i] = scan_item.values[i];
+                        s_partials[scan_item.key + i * TILE_ITEMS] = scan_item.values[i];
                     }
                 }
                 else
@@ -805,7 +808,7 @@ namespace merged
 #pragma unroll
                         for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
                         {
-                            s_partials[scan_segment[ITEM - 1].key * DIM_OUTPUT_VECTOR_Y + i] = scan_segment[ITEM - 1].values[i];
+                            s_partials[scan_segment[ITEM - 1].key + i * TILE_ITEMS] = scan_segment[ITEM - 1].values[i];
                         }
                     }
                     else
@@ -822,9 +825,13 @@ namespace merged
 
 // memory coalescing for writing the output vector y
 #pragma unroll 1
-                for (int item = threadIdx.x; item < tile_num_rows * DIM_OUTPUT_VECTOR_Y; item += BLOCK_THREADS)
+                for (int item = threadIdx.x; item < tile_num_rows; item += BLOCK_THREADS)
                 {
-                    spmv_params.d_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item] = s_partials[item];
+                    #pragma unroll
+                    for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
+                    {
+                        spmv_params.d_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i] = s_partials[item + i * TILE_ITEMS];
+                    }
                 }
             }
 

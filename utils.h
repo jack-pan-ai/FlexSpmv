@@ -723,7 +723,7 @@ int CompareResults(double* computed, double* reference, OffsetT len, bool verbos
     double meps = std::numeric_limits<double>::epsilon();
     float fmeps = std::numeric_limits<float>::epsilon();
  
-    std::cout << "len: " << len << std::endl;
+    // std::cout << "len: " << len << std::endl;
 
     for (OffsetT i = 0; i < len; i++)
     {

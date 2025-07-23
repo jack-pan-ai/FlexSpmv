@@ -237,8 +237,8 @@ void DisplayPerf(
     CsrMatrix<ValueT, OffsetT>&     csr_matrix)
 {
     double nz_throughput, effective_bandwidth;
-    size_t total_bytes = (csr_matrix.num_nonzeros * (sizeof(ValueT) * 2 + sizeof(OffsetT))) +
-        (csr_matrix.num_rows) * (sizeof(OffsetT) + sizeof(ValueT));
+    size_t total_bytes = (csr_matrix.num_nonzeros * (sizeof(ValueT) * (DIM_INPUT_VECTOR_X + 1) *2 + 4 * sizeof(OffsetT))) +
+        (csr_matrix.num_rows) * (sizeof(OffsetT) + sizeof(ValueT) * DIM_OUTPUT_VECTOR_Y);
 
     nz_throughput       = double(csr_matrix.num_nonzeros) / avg_ms / 1.0e6;
     effective_bandwidth = double(total_bytes) / avg_ms / 1.0e6;
