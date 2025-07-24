@@ -202,7 +202,6 @@ namespace merged
         ColumnIndicesIteratorT wd_column_indices_i; ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
         ColumnIndicesIteratorT wd_column_indices_j; ///< Wrapped Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
         VectorValueIteratorT wd_vector_x;         ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
-        VectorValueIteratorT wd_vector_y;         ///< Wrapped Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
 
         // <Wrapped pointer to the array of indexing A>
         SpmValueIteratorT wd_spm_nnz;       ///< Wrapped pointer to sparse matrix A
@@ -224,8 +223,7 @@ namespace merged
               wd_column_indices_i(spmv_params.d_column_indices_i),
               wd_column_indices_j(spmv_params.d_column_indices_j),
               wd_spm_nnz(spmv_params.d_spm_nnz),
-              wd_vector_x(spmv_params.d_vector_x),
-              wd_vector_y(spmv_params.d_vector_y)
+              wd_vector_x(spmv_params.d_vector_x)
         {
         }
 
@@ -891,12 +889,6 @@ namespace merged
             // Output the tile's carry-out
             if (threadIdx.x == 0)
             {
-                if (HAS_ALPHA)
-                {
-                    // overload the operator * for tensor type
-                    tile_carry = tile_carry * spmv_params.alpha;
-                }
-
                 tile_carry.key += tile_start_coord.x;
                 if (tile_carry.key >= spmv_params.num_rows)
                 {
