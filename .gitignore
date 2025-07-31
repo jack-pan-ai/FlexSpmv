@@ -3,3 +3,29 @@ flex_spmv_test
 *.mtx
 bin/
 trash/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# JIT compilation artifacts
+*.so
+*.dylib
+*.dll
+*.pyd
+
+# AOT compilation artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# CUDA compilation artifacts
+*.o
+*.obj
+*.ptx
+*.cubin
+*.fatbin
+*.ii
+*.i

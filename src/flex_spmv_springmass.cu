@@ -173,8 +173,34 @@ void SpmvGold(
 template <
     typename ValueT,
     typename OffsetT>
+float LaunchSpMV(
+    FlexParams<ValueT, OffsetT>&    params)
+{
+    // Allocate temporary storage
+    size_t temp_storage_bytes = 0;
+    void *d_temp_storage = NULL;
+    
+    // Get amount of temporary storage needed
+    cudaError_t error = merged::merged_spmv_launch<ValueT, OffsetT>(params, d_temp_storage, temp_storage_bytes);
+    CubDebugExit(error);
+
+    // Allocate
+    CubDebugExit(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_bytes));
+
+    // Warmup
+    error = merged::merged_spmv_launch<ValueT, OffsetT>(params, d_temp_storage, temp_storage_bytes);
+    CubDebugExit(error);
+
+}
+
+/**
+ * Run SpMV from scratch
+ */
+template <
+    typename ValueT,
+    typename OffsetT>
 float TestGpuMergeCsrmv_from_scratch(
-    ValueT*                         vector_y_in,
+    // ValueT*                         vector_y_in,
     ValueT*                         reference_vector_y_out,
     FlexParams<ValueT, OffsetT>&    params,
     int                             timing_iterations,
@@ -194,7 +220,7 @@ float TestGpuMergeCsrmv_from_scratch(
     CubDebugExit(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_bytes));
 
     // Reset input/output vector y
-    CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(ValueT) * params.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
+    // CubDebugExit(cudaMemcpy(params.d_vector_y, vector_y_in, sizeof(ValueT) * params.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
 
     // Warmup
     error = merged::merged_spmv_launch<ValueT, OffsetT>(params, d_temp_storage, temp_storage_bytes);
@@ -307,10 +333,11 @@ void RunTest(
     ValueT* vector_y_out    = new ValueT[csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y];
 
     for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
+        // Initialize vector_x with seed
         vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f; // random number between 0 and 1
 
     for (int row = 0; row < csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y; ++row)
-        vector_y_in[row] = 1.0f;
+        vector_y_in[row] = 0.0f;
 
     // Compute reference answer
     SpmvGold(csr_matrix, vector_x, vector_y_in, vector_y_out, alpha, beta);
@@ -332,28 +359,22 @@ void RunTest(
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets, sizeof(OffsetT) * (csr_matrix.num_rows + 1)));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_k, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_l, sizeof(OffsetT) * csr_matrix.num_nonzeros));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_vector_x,        sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_vector_y,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
     params.num_rows         = csr_matrix.num_rows;
     params.num_cols         = csr_matrix.num_cols;
     params.num_nonzeros     = csr_matrix.num_nonzeros;
-    params.alpha            = alpha;
-    params.beta             = beta;
 
     CubDebugExit(cudaMemcpy((void*) params.d_spm_nnz,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_row_end_offsets,   (void*) csr_matrix.row_offsets,     sizeof(OffsetT) * (csr_matrix.num_rows + 1), cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_column_indices_i,  (void*) csr_matrix.column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_column_indices_j,  (void*) csr_matrix.column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.d_column_indices_k,  (void*) csr_matrix.column_indices_k, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.d_column_indices_l,  (void*) csr_matrix.column_indices_l, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.d_vector_x,          (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
+      CubDebugExit(cudaMemcpy((void*) params.d_vector_x,          (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
 
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
-    avg_ms = TestGpuMergeCsrmv_from_scratch(vector_y_in, vector_y_out, params, timing_iterations, setup_ms);
+    avg_ms = TestGpuMergeCsrmv_from_scratch(vector_y_out, params, timing_iterations, setup_ms);
     DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);    
     
     // Cleanup
@@ -361,8 +382,6 @@ void RunTest(
     if (params.d_row_end_offsets)   CubDebugExit(g_allocator.DeviceFree(params.d_row_end_offsets));
     if (params.d_column_indices_i)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_i));
     if (params.d_column_indices_j)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_j));
-    if (params.d_column_indices_k)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_k));
-    if (params.d_column_indices_l)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_l));
     if (params.d_vector_x)          CubDebugExit(g_allocator.DeviceFree(params.d_vector_x));
     if (params.d_vector_y)          CubDebugExit(g_allocator.DeviceFree(params.d_vector_y));
 

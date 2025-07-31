@@ -7,39 +7,36 @@ import string
 import easier as esr
 from easier.core.jit import EasierTracer
 
-# Part 1: Define SpringMass model
-class SpringMassSystem(esr.Module):
-    def __init__(self, dt: float):
+# Part 1: Define Spmv model
+class SpmvSystem(esr.Module):
+    def __init__(self):
         super().__init__()
 
         # Selector for i and j
-        I = torch.randint(0, 10, (10,), device="cuda")
-        J = torch.randint(0, 10, (10,), device="cuda")
-        self.selector_i = esr.Selector(I)
-        self.selector_j = esr.Selector(J)
-        self.reduce_i = esr.Reducer(I, 10)
+        self.num_nnz = 20
+        self.num_cols = 10
+        self.num_rows = 5
+        vector_index = torch.randint(0, self.num_cols, (self.num_nnz,), device="cuda")
+        row_end_offset = torch.randint(0, self.num_nnz, (self.num_rows,), device="cuda")
+        self.selector_i = esr.Selector(vector_index)
+        self.reduce_i = esr.Reducer(row_end_offset, self.num_rows)
 
-        # SpringMass parameters
-        self.m = torch.rand(10, 1, device="cuda")  # (N, 1)
-        self.r = torch.rand(10, 2, device="cuda")  # (N, 2)
-        self.v = torch.rand(10, 2, device="cuda")  # (N, 2)
-        # self.L = torch.rand(10, 1, device="cuda")  # (N, 1)
-        self.K = torch.rand(10, 1, device="cuda")  # (N, 1)
-
-        self.dt = dt
+        # spmv parameters
+        self.spm_nnz = torch.rand(self.num_nnz, 1, device="cuda")  # (N, 1)
+        self.vector = torch.rand(self.num_cols, 1, device="cuda")  # (N, 1)
 
     def forward(self):
         # compute force
-        r_i = self.selector_i(self.r)
-        r_j = self.selector_j(self.r)
-        r_ij = r_i - r_j
-        norm_r_ij = torch.norm(r_ij, dim=1)
-        e_ij = r_ij / norm_r_ij
-        f_ij = self.K * (norm_r_ij - self.K) * e_ij
-        # reduce f_ij to get f_i
-        f_i = self.reduce_i(f_ij)
+        v = self.selector_i(self.vector)
+        f_i = self.spm_nnz * v
+        f_i = self.reduce_i(f_i)
 
-        return f_i
+        # compute force for another vector
+        v1 = self.selector_i(self.vector)
+        f_i1 = self.spm_nnz * v1
+        f_i1 = self.reduce_i(f_i1)
+
+        return [f_i, f_i1]
 
 # Part 2: Trace the model with torch.fx
 def trace_model(model):
@@ -180,7 +177,7 @@ def generate_cuda_code_from_graph(traced_model):
 # Main function to run the entire pipeline
 def main():
     # pytorch model
-    model = SpringMassSystem(dt=1.0)
+    model = SpmvSystem()
 
     print("Step 1: Tracing model with torch.fx")
     traced_model = trace_model(model)

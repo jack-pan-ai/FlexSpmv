@@ -12,21 +12,23 @@
  */
 namespace merged
 {
+    // Import CUB namespace to avoid having to prefix every CUB function
+    using namespace cub;
     template <
         typename ValueT,
         typename OffsetT,
         typename SpmvSearchKernelT,
-        typename SpmvKernelT,
-        typename SegmentFixupKernelT>
+        typename SpmvKernelT> //,
+        // typename SegmentFixupKernelT
     __host__ __forceinline__ static cudaError_t merged_spmv_dispatch(
         FlexParams<ValueT, OffsetT> spmv_params,  ///< SpMV input parameter bundle
         void *d_temp_storage,                     ///< [in] Pointer to the device-accessible allocation of temporary storage
         size_t &temp_storage_bytes,               ///< [in,out] Reference to size in bytes of d_temp_storage allocations
         SpmvSearchKernelT spmv_search_kernel,     ///< [in] Kernel function pointer to parameterization of AgentSpmvSearchKernel
         SpmvKernelT spmv_kernel,                  ///< [in] Kernel function pointer to parameterization of AgentSpmvKernel
-        SegmentFixupKernelT segment_fixup_kernel, ///< [in] Kernel function pointer to parameterization of cub::DeviceSegmentFixupKernel
+        // SegmentFixupKernelT segment_fixup_kernel, ///< [in] Kernel function pointer to parameterization of cub::DeviceSegmentFixupKernel
         LaunchKernelConfig spmv_config,           ///< [in] Dispatch parameters that match the policy that \p spmv_kernel was compiled for
-        LaunchKernelConfig segment_fixup_config,  ///< [in] Dispatch parameters that match the policy that \p segment_fixup_kernel was compiled for
+        // LaunchKernelConfig segment_fixup_config,  ///< [in] Dispatch parameters that match the policy that \p segment_fixup_kernel was compiled for
         bool debug_synchronous = false,           ///< [in] Whether or not to synchronize the stream after every kernel launch to check for errors.  Also causes launch configurations to be printed to the console.  Default is \p false.
         cudaStream_t stream = 0)                  ///< [in] CUDA stream to launch kernels within.  Default is stream<sub>0</sub>.
     {
@@ -57,26 +59,26 @@ namespace merged
 
             // Tile sizes of kernels
             int merge_tile_size = spmv_config.block_threads * spmv_config.items_per_thread;
-            int segment_fixup_tile_size = segment_fixup_config.block_threads * segment_fixup_config.items_per_thread;
+            // int segment_fixup_tile_size = segment_fixup_config.block_threads * segment_fixup_config.items_per_thread;
 
             // Number of tiles for kernels
             int num_merge_tiles = cub::DivideAndRoundUp(num_merge_items, merge_tile_size);
-            int num_segment_fixup_tiles = cub::DivideAndRoundUp(num_merge_tiles, segment_fixup_tile_size);
+            // int num_segment_fixup_tiles = cub::DivideAndRoundUp(num_merge_tiles, segment_fixup_tile_size);
 
             // Get SM occupancy for kernels
             int spmv_sm_occupancy;
-            if (CubDebug(error = MaxSmOccupancy(
+            if (CubDebug(error = cub::MaxSmOccupancy(
                              spmv_sm_occupancy,
                              spmv_kernel,
                              spmv_config.block_threads)))
                 break;
 
-            int segment_fixup_sm_occupancy;
-            if (CubDebug(error = MaxSmOccupancy(
-                             segment_fixup_sm_occupancy,
-                             segment_fixup_kernel,
-                             segment_fixup_config.block_threads)))
-                break;
+            // int segment_fixup_sm_occupancy;
+            // if (CubDebug(error = cub::MaxSmOccupancy(
+            //                  segment_fixup_sm_occupancy,
+            //                  segment_fixup_kernel,
+            //                  segment_fixup_config.block_threads)))
+            //     break;
 
             // Get grid dimensions
             dim3 spmv_grid_size(
@@ -84,18 +86,22 @@ namespace merged
                 cub::DivideAndRoundUp(num_merge_tiles, max_dim_x),
                 1);
 
-            dim3 segment_fixup_grid_size(
-                CUB_MIN(num_segment_fixup_tiles, max_dim_x),
-                cub::DivideAndRoundUp(num_segment_fixup_tiles, max_dim_x),
-                1);
+            // dim3 segment_fixup_grid_size(
+            //     CUB_MIN(num_segment_fixup_tiles, max_dim_x),
+            //     cub::DivideAndRoundUp(num_segment_fixup_tiles, max_dim_x),
+            //     1);
 
-            size_t allocation_sizes[2];
-            allocation_sizes[0] = num_merge_tiles * sizeof(TensorT);           // bytes needed for block carry-out pairs
-            allocation_sizes[1] = (num_merge_tiles + 1) * sizeof(CoordinateT); // bytes needed for tile starting coordinates
+            // size_t allocation_sizes[2];
+            // allocation_sizes[0] = num_merge_tiles * sizeof(TensorT);           // bytes needed for block carry-out pairs
+            // allocation_sizes[0] = 0;           // bytes needed for block carry-out pairs
+            // allocation_sizes[1] = (num_merge_tiles + 1) * sizeof(CoordinateT); // bytes needed for tile starting coordinates
+
+            size_t allocation_sizes[1];
+            allocation_sizes[0] = (num_merge_tiles + 1) * sizeof(CoordinateT); // bytes needed for tile starting coordinates
 
             // Alias the temporary allocations from the single storage blob (or compute the necessary size of the blob)
-            void *allocations[2] = {};
-            if (CubDebug(error = AliasTemporaries(d_temp_storage, temp_storage_bytes, allocations, allocation_sizes)))
+            void *allocations[1] = {};
+            if (CubDebug(error = cub::AliasTemporaries(d_temp_storage, temp_storage_bytes, allocations, allocation_sizes)))
                 break;
             if (d_temp_storage == NULL)
             {
@@ -104,8 +110,10 @@ namespace merged
             }
 
             // Alias the other allocations
-            TensorT *d_tile_carry_pairs = (TensorT *)allocations[0];         // Agent carry-out pairs
-            CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[1]; // Agent starting coordinates
+            // TensorT *d_tile_carry_pairs = (TensorT *)allocations[0];         // Agent carry-out pairs
+            // CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[1]; // Agent starting coordinates
+            CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[0]; // Agent starting coordinates
+
 
             // Get search/init grid dims
             int search_block_size = INIT_KERNEL_THREADS;
@@ -134,7 +142,7 @@ namespace merged
                     break;
 
                 // Sync the stream if specified to flush runtime errors
-                if (debug_synchronous && (CubDebug(error = SyncStream(stream))))
+                if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream))))
                     break;
             }
 
@@ -145,35 +153,40 @@ namespace merged
 
             // Invoke spmv_kernel
             // [INFO] tile_state is removed, considering we are only use the atomic operation in the fixup kernel
-            spmv_kernel<<<spmv_grid_size, spmv_config.block_threads, 0, stream>>>(spmv_params, d_tile_coordinates, d_tile_carry_pairs, num_merge_tiles, num_segment_fixup_tiles);
+            spmv_kernel<<<spmv_grid_size, spmv_config.block_threads, 0, stream>>>(
+                spmv_params, d_tile_coordinates, 
+                // d_tile_carry_pairs, 
+                num_merge_tiles
+                // num_segment_fixup_tiles
+            );
 
             // Check for failure to launch
             if (CubDebug(error = cudaPeekAtLastError()))
                 break;
 
             // Sync the stream if specified to flush runtime errors
-            if (debug_synchronous && (CubDebug(error = SyncStream(stream))))
+            if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream))))
                 break;
 
-            // Run reduce-by-key fixup if necessary
-            if (num_merge_tiles > 1)
-            {
-                // Log segment_fixup_kernel configuration
-                if (debug_synchronous)
-                    _CubLog("Invoking segment_fixup_kernel<<<{%d,%d,%d}, %d, 0, %lld>>>(), %d items per thread, %d SM occupancy\n",
-                            segment_fixup_grid_size.x, segment_fixup_grid_size.y, segment_fixup_grid_size.z, segment_fixup_config.block_threads, (long long)stream, segment_fixup_config.items_per_thread, segment_fixup_sm_occupancy);
+            // // Run reduce-by-key fixup if necessary
+            // if (num_merge_tiles > 1)
+            // {
+            //     // Log segment_fixup_kernel configuration
+            //     if (debug_synchronous)
+            //         _CubLog("Invoking segment_fixup_kernel<<<{%d,%d,%d}, %d, 0, %lld>>>(), %d items per thread, %d SM occupancy\n",
+            //                 segment_fixup_grid_size.x, segment_fixup_grid_size.y, segment_fixup_grid_size.z, segment_fixup_config.block_threads, (long long)stream, segment_fixup_config.items_per_thread, segment_fixup_sm_occupancy);
 
-                // Invoke segment_fixup_kernel
-                segment_fixup_kernel<<<segment_fixup_grid_size, segment_fixup_config.block_threads, 0, stream>>>(d_tile_carry_pairs, spmv_params.d_vector_y, num_merge_tiles, num_segment_fixup_tiles);
+            //     // Invoke segment_fixup_kernel
+            //     segment_fixup_kernel<<<segment_fixup_grid_size, segment_fixup_config.block_threads, 0, stream>>>(d_tile_carry_pairs, spmv_params.d_vector_y, num_merge_tiles, num_segment_fixup_tiles);
 
-                // Check for failure to launch
-                if (CubDebug(error = cudaPeekAtLastError()))
-                    break;
+            //     // Check for failure to launch
+            //     if (CubDebug(error = cudaPeekAtLastError()))
+            //         break;
 
-                // Sync the stream if specified to flush runtime errors
-                if (debug_synchronous && (CubDebug(error = SyncStream(stream))))
-                    break;
-            }
+            //     // Sync the stream if specified to flush runtime errors
+            //     if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream))))
+            //         break;
+            // }
         } while (0);
 
         // Return error
@@ -196,11 +209,11 @@ namespace merged
         {
             // policy for PTX and init the config
             using PtxSpmvPolicyT = PtxSpmvPolicyT<ValueT>;
-            using PtxSegmentFixupPolicy = PtxSegmentFixupPolicy<ValueT>;
+            // using PtxSegmentFixupPolicy = PtxSegmentFixupPolicy<ValueT>;
 
-            LaunchKernelConfig spmv_config, segment_fixup_config;
+            LaunchKernelConfig spmv_config; //, segment_fixup_config;
             spmv_config.template Init<PtxSpmvPolicyT>();
-            segment_fixup_config.template Init<PtxSegmentFixupPolicy>();
+            // segment_fixup_config.template Init<PtxSegmentFixupPolicy>();
 
             using TensorT = Tensor<OffsetT, ValueT, DIM_OUTPUT_VECTOR_Y>;
             using CoordinateT = typename cub::CubVector<OffsetT, 2>::Type;
@@ -209,12 +222,19 @@ namespace merged
             // [INFO] the row_end_offsets is shifted by 1,
             spmv_params.d_row_end_offsets = spmv_params.d_row_end_offsets + 1;
 
+            // error = merged_spmv_dispatch(spmv_params, d_temp_storage, temp_storage_bytes,
+            //                              SpmvSearchKernel<PtxSpmvPolicyT, OffsetT, CoordinateT, SpmvParamsT>,
+            //                              SpmvKernel<PtxSpmvPolicyT, ValueT, OffsetT, CoordinateT, TensorT, SpmvParamsT, false, false>,
+            //                              SegmentFixupKernel<PtxSegmentFixupPolicy, TensorT *, ValueT *, OffsetT>,
+            //                              spmv_config, segment_fixup_config,
+            //                              debug_synchronous, stream);
+            // fused fixup kernel with spmv
             error = merged_spmv_dispatch(spmv_params, d_temp_storage, temp_storage_bytes,
                                          SpmvSearchKernel<PtxSpmvPolicyT, OffsetT, CoordinateT, SpmvParamsT>,
                                          SpmvKernel<PtxSpmvPolicyT, ValueT, OffsetT, CoordinateT, TensorT, SpmvParamsT, false, false>,
-                                         SegmentFixupKernel<PtxSegmentFixupPolicy, TensorT *, ValueT *, OffsetT>,
-                                         spmv_config, segment_fixup_config,
+                                         spmv_config,
                                          debug_synchronous, stream);
+
             if (CubDebug(error))
                 break;
         } while (0);

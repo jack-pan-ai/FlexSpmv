@@ -4,9 +4,8 @@
 #define DIM_OUTPUT_VECTOR_Y 2            // Dimension of the output vector
 #define DIM_INPUT_VECTOR_X 2    // Dimension of the input vector x
 #define DIM_INPUT_MATRIX_A 1    // Dimension of the input matrix A
-#define NUM_INPUT_VECTOR_X 2    // Number of input vector x, involed in mapping in the shared memory for GPUs
-#define NUM_INPUT_MATRIX_A 2    // Number of input matrix A, involved in mapping in the shared memory for GPUs
-
+#define NUM_INPUT_VECTOR_X 2    // [TODO for indirect loading] Number of input vector x, involed in mapping in the shared memory for GPUs
+#define NUM_INPUT_MATRIX_A 2    // [TODO for indirect loading] Number of input matrix A, involved in mapping in the shared memory for GPUs]
 
 template <typename OffsetT, typename ValueT, int Dim>
 struct Tensor
@@ -117,8 +116,6 @@ struct FlexParams
 {
     ValueT *d_spm_nnz;           ///< Pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
     OffsetT *d_row_end_offsets;  ///< Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-    OffsetT *d_column_indices_k; ///< Pointer to the array of \p num_nonzeros row-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
-    OffsetT *d_column_indices_l; ///< Pointer to the array of \p num_nonzeros row-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
     OffsetT *d_column_indices_i; ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
     OffsetT *d_column_indices_j; ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
     ValueT *d_vector_x;          ///< Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
@@ -126,8 +123,6 @@ struct FlexParams
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
     int num_nonzeros;            ///< Number of nonzero elements of matrix <b>A</b>.
-    ValueT alpha;                ///< Alpha multiplicand
-    ValueT beta;                 ///< Beta addend-multiplicand
 };
 
 struct LaunchKernelConfig

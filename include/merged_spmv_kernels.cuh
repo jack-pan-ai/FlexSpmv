@@ -114,24 +114,24 @@ namespace merged
         __global__ void SpmvKernel(
             SpmvParamsT spmv_params,         ///< [in] Flexible Spmv input parameter bundle
             CoordinateT *d_tile_coordinates, ///< [in] Pointer to the temporary array of tile starting coordinates
-            TensorT *d_tile_carry_pairs,     ///< [out] Pointer to the temporary array carry-out dot product row-ids, one per block
-            int num_tiles,                   ///< [in] Number of merge tiles
-            int num_segment_fixup_tiles)     ///< [in] Number of reduce-by-key tiles (fixup grid size)
+            // TensorT *d_tile_carry_pairs,     ///< [out] Pointer to the temporary array carry-out dot product row-ids, one per block
+            int num_tiles                   ///< [in] Number of merge tiles
+            // int num_segment_fixup_tiles      ///< [in] Number of reduce-by-key tiles (fixup grid size)
+        )     
     {
         // Flexible Spmv agent type specialization
         typedef AgentFlexSpmv<
             SpmvPolicyT,
             ValueT,
             OffsetT,
-            TensorT,
-            HAS_ALPHA,
-            HAS_BETA>
+            TensorT>
             AgentFlexSpmvT;
 
         // Shared memory for AgentFlexSpmv
         __shared__ typename AgentFlexSpmvT::TempStorage temp_storage;
 
-        AgentFlexSpmvT(temp_storage, spmv_params).ConsumeTile(d_tile_coordinates, d_tile_carry_pairs, num_tiles);
+        // AgentFlexSpmvT(temp_storage, spmv_params).ConsumeTile(d_tile_coordinates, d_tile_carry_pairs, num_tiles);
+        AgentFlexSpmvT(temp_storage, spmv_params).ConsumeTile(d_tile_coordinates, num_tiles);
     }
 
     /**
