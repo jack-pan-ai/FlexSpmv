@@ -24,12 +24,12 @@ torch::Tensor launch_flex_spmv_cuda(
     
     // Setup FlexParams struct with PyTorch tensor data
     FlexParams<ValueT, OffsetT> params;
-    params.d_spm_nnz = spm_k.data_ptr<ValueT>();
+    params.spm_k_ptr = spm_k.data_ptr<ValueT>();
     // params.d_spm_nnz = spm_l.data_ptr<ValueT>(); // use it later
-    params.d_row_end_offsets = row_offsets.data_ptr<OffsetT>();
-    params.d_column_indices_i = col_indices_i.data_ptr<OffsetT>();
-    params.d_column_indices_j = col_indices_j.data_ptr<OffsetT>();
-    params.d_vector_x = vector_x.data_ptr<ValueT>();
+    params.row_end_offsets_ptr = row_offsets.data_ptr<OffsetT>();
+    params.selector_i_ptr = col_indices_i.data_ptr<OffsetT>();
+    params.selector_j_ptr = col_indices_j.data_ptr<OffsetT>();
+    params.vector_x_ptr = vector_x.data_ptr<ValueT>();
     params.d_vector_y = vector_y.data_ptr<ValueT>();
     params.num_rows = num_rows;
     params.num_cols = num_cols;

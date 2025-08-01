@@ -133,4 +133,34 @@ namespace merged
         // AgentFlexSpmvT(temp_storage, spmv_params).ConsumeTile(d_tile_coordinates, d_tile_carry_pairs, num_tiles);
         AgentFlexSpmvT(temp_storage, spmv_params).ConsumeTile(d_tile_coordinates, num_tiles);
     }
+
+    /**
+     * Multi-block reduce-by-key sweep kernel entry point
+     */
+    template <
+        typename AgentSegmentFixupPolicyT,  ///< Parameterized AgentSegmentFixupPolicy tuning policy type
+        typename PairsInputIteratorT,       ///< Random-access input iterator type for keys
+        typename AggregatesOutputIteratorT, ///< Random-access output iterator type for values
+        typename OffsetT>                   ///< Signed integer type for global offsets
+    __launch_bounds__(int(AgentSegmentFixupPolicyT::BLOCK_THREADS))
+        __global__ void SegmentFixupKernel(
+            PairsInputIteratorT d_pairs_in,             ///< [in] Pointer to the array carry-out dot product row-ids, one per spmv block
+            AggregatesOutputIteratorT d_aggregates_out, ///< [in,out] Output value aggregates
+            OffsetT num_items,                          ///< [in] Total number of items to select from
+            int num_tiles)                              ///< [in] Total number of tiles for the entire problem
+    {
+        // Thread block type for reducing tiles of value segments
+        typedef AgentSegmentFixup<
+            AgentSegmentFixupPolicyT,
+            PairsInputIteratorT,
+            AggregatesOutputIteratorT,
+            OffsetT>
+            AgentSegmentFixupT;
+
+        // Shared memory for AgentSegmentFixup
+        __shared__ typename AgentSegmentFixupT::TempStorage temp_storage;
+
+        // Process tiles
+        AgentSegmentFixupT(temp_storage, d_pairs_in, d_aggregates_out).ConsumeRange(num_items, num_tiles);
+    }
 }

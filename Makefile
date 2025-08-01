@@ -20,7 +20,8 @@ INCLUDES += -I$(CUDA_HOME)/include
 # Source files and their corresponding executables
 
 SPRINGMASS_SOURCE := src/flex_spmv_springmass.cu
-SPRINGMASS_EXEC := $(BIN_DIR)/flex_spmv_springmass
+# SPRINGMASS_SOURCE := src/flex_spmv_springmass_gen.cu
+SPRINGMASS_EXEC := $(BIN_DIR)/flex_spmv_springmass_scratch
 
 # Header files that might be included
 HEADER_FILES := $(wildcard include/*.cuh) $(wildcard include/*.h) $(wildcard *.h)

@@ -1,9 +1,11 @@
 #pragma once
 
 #define INIT_KERNEL_THREADS 128 // INFO: this is from cub config
-#define DIM_OUTPUT_VECTOR_Y 2   // [code generation] Dimension of the output vector
-#define DIM_INPUT_VECTOR_X 2    // [code generation] Dimension of the input vector x
+#define DIM_OUTPUT_VECTOR_Y 2            // Dimension of the output vector
+#define DIM_INPUT_VECTOR_X 2    // Dimension of the input vector x
 #define DIM_INPUT_MATRIX_A 1    // Dimension of the input matrix A
+#define NUM_INPUT_VECTOR_X 2    // [TODO for indirect loading] Number of input vector x, involed in mapping in the shared memory for GPUs
+#define NUM_INPUT_MATRIX_A 2    // [TODO for indirect loading] Number of input matrix A, involved in mapping in the shared memory for GPUs]
 
 template <typename OffsetT, typename ValueT, int Dim>
 struct Tensor
@@ -15,7 +17,6 @@ struct Tensor
     // Constructor
     __host__ __device__ Tensor()
     {
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             values[i] = 0.0f;
     }
@@ -23,7 +24,6 @@ struct Tensor
     // Constructor with key and values
     __host__ __device__ Tensor(const OffsetT &k, const ValueT *v) : key(k)
     {
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             values[i] = v[i];
     }
@@ -33,7 +33,6 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = values[i] + other.values[i];
         return result;
@@ -43,7 +42,6 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = values[i] - other.values[i];
         return result;
@@ -53,7 +51,6 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = values[i] * other.values[i];
         return result;
@@ -63,19 +60,8 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = (other.values[i] != 0.0) ? (values[i] / other.values[i]) : 0.0;
-        return result;
-    }
-
-    __host__ __device__ Tensor operator/(ValueT scalar) const
-    {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] / scalar;
         return result;
     }
 
@@ -83,7 +69,6 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = values[i] * scalar;
         return result;
@@ -93,7 +78,6 @@ struct Tensor
     {
         Tensor result;
         result.key = key;
-        #pragma unroll
         for (int i = 0; i < Dim; ++i)
             result.values[i] = values[i] + scalar;
         return result;
@@ -108,16 +92,6 @@ struct Tensor
     __host__ __device__ const ValueT &operator[](int idx) const
     {
         return values[idx];
-    }
-    
-    // L2 norm (Euclidean norm)
-    __host__ __device__ ValueT l2Norm() const
-    {
-        ValueT sum = 0.0;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            sum += values[i] * values[i];
-        return sqrt(sum);
     }
 
     // Host-only print function
@@ -134,16 +108,18 @@ struct Tensor
     }
 };
 
-// FlexParams [code generation]
+// FlexParams [code transformation]
 template <
     typename ValueT,  ///< Matrix and vector value type
     typename OffsetT> ///< Signed integer type for sequence offsets
 struct FlexParams
 {
-    // [code generation]
+    ValueT *d_spm_nnz;           ///< Pointer to the array of \p num_nonzeros values of the corresponding nonzero elements of matrix <b>A</b>.
     OffsetT *d_row_end_offsets;  ///< Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-    ${input_declarations_utils_code}
-    ValueT *d_vector_y;        ///< Pointer to the array of \p output vector <em>y</em>
+    OffsetT *d_column_indices_i; ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+    OffsetT *d_column_indices_j; ///< Pointer to the array of \p num_nonzeros column-indices of the corresponding nonzero elements of matrix <b>A</b>.  (Indices are zero-valued.)
+    ValueT *d_vector_x;          ///< Pointer to the array of \p num_cols values corresponding to the dense input vector <em>x</em>
+    ValueT *d_vector_y;          ///< Pointer to the array of \p num_rows values corresponding to the dense output vector <em>y</em>
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
     int num_nonzeros;            ///< Number of nonzero elements of matrix <b>A</b>.
@@ -163,17 +139,3 @@ struct LaunchKernelConfig
         tile_items = block_threads * items_per_thread;
     }
 };
-
-// Non-member operator to enable scalar * Tensor
-template <typename OffsetT, typename ValueT, int Dim>
-__host__ __device__ Tensor<OffsetT, ValueT, Dim> operator*(ValueT scalar, const Tensor<OffsetT, ValueT, Dim>& tensor)
-{
-    return tensor * scalar;  // Reuse the existing Tensor * scalar operator
-}
-
-// Non-member operator to enable scalar / Tensor
-template <typename OffsetT, typename ValueT, int Dim>
-__host__ __device__ Tensor<OffsetT, ValueT, Dim> operator/(ValueT scalar, const Tensor<OffsetT, ValueT, Dim>& tensor)
-{
-    return tensor / scalar;
-}
