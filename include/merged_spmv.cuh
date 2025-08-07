@@ -73,28 +73,11 @@ namespace merged
                              spmv_config.block_threads)))
                 break;
 
-            // int segment_fixup_sm_occupancy;
-            // if (CubDebug(error = cub::MaxSmOccupancy(
-            //                  segment_fixup_sm_occupancy,
-            //                  segment_fixup_kernel,
-            //                  segment_fixup_config.block_threads)))
-            //     break;
-
             // Get grid dimensions
             dim3 spmv_grid_size(
                 CUB_MIN(num_merge_tiles, max_dim_x),
                 cub::DivideAndRoundUp(num_merge_tiles, max_dim_x),
                 1);
-
-            // dim3 segment_fixup_grid_size(
-            //     CUB_MIN(num_segment_fixup_tiles, max_dim_x),
-            //     cub::DivideAndRoundUp(num_segment_fixup_tiles, max_dim_x),
-            //     1);
-
-            // size_t allocation_sizes[2];
-            // allocation_sizes[0] = num_merge_tiles * sizeof(TensorT);           // bytes needed for block carry-out pairs
-            // allocation_sizes[0] = 0;           // bytes needed for block carry-out pairs
-            // allocation_sizes[1] = (num_merge_tiles + 1) * sizeof(CoordinateT); // bytes needed for tile starting coordinates
 
             size_t allocation_sizes[1];
             allocation_sizes[0] = (num_merge_tiles + 1) * sizeof(CoordinateT); // bytes needed for tile starting coordinates
@@ -110,9 +93,7 @@ namespace merged
             }
 
             // Alias the other allocations
-            // TensorT *d_tile_carry_pairs = (TensorT *)allocations[0];         // Agent carry-out pairs
-            // CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[1]; // Agent starting coordinates
-            CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[0]; // Agent starting coordinates
+           CoordinateT *d_tile_coordinates = (CoordinateT *)allocations[0]; // Agent starting coordinates
 
 
             // Get search/init grid dims
@@ -168,26 +149,7 @@ namespace merged
             if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream))))
                 break;
 
-            // // Run reduce-by-key fixup if necessary
-            // if (num_merge_tiles > 1)
-            // {
-            //     // Log segment_fixup_kernel configuration
-            //     if (debug_synchronous)
-            //         _CubLog("Invoking segment_fixup_kernel<<<{%d,%d,%d}, %d, 0, %lld>>>(), %d items per thread, %d SM occupancy\n",
-            //                 segment_fixup_grid_size.x, segment_fixup_grid_size.y, segment_fixup_grid_size.z, segment_fixup_config.block_threads, (long long)stream, segment_fixup_config.items_per_thread, segment_fixup_sm_occupancy);
-
-            //     // Invoke segment_fixup_kernel
-            //     segment_fixup_kernel<<<segment_fixup_grid_size, segment_fixup_config.block_threads, 0, stream>>>(d_tile_carry_pairs, spmv_params.d_vector_y, num_merge_tiles, num_segment_fixup_tiles);
-
-            //     // Check for failure to launch
-            //     if (CubDebug(error = cudaPeekAtLastError()))
-            //         break;
-
-            //     // Sync the stream if specified to flush runtime errors
-            //     if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream))))
-            //         break;
-            // }
-        } while (0);
+       } while (0);
 
         // Return error
         return error;

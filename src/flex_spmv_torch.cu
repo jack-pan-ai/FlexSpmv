@@ -6,17 +6,21 @@
 
 // Forward declaration of the CUDA implementation
 template <typename ValueT, typename OffsetT>
-torch::Tensor launch_flex_spmv_cuda(torch::Tensor spm_k, torch::Tensor spm_l,
+std::vector<torch::Tensor> launch_flex_spmv_cuda(torch::Tensor spm_k, torch::Tensor spm_l,
                       torch::Tensor row_offsets, 
                       torch::Tensor col_indices_i, torch::Tensor col_indices_j, 
-                      torch::Tensor vector_x, torch::Tensor vector_y,
+                      torch::Tensor vector_x, 
+                      torch::Tensor output_y_reducer_i, 
+                      torch::Tensor output_y_reducer_j,
                       int num_rows, int num_cols, int num_nonzeros);
 
 // Python-facing function that will be called from Python
-torch::Tensor flex_spmv(torch::Tensor spm_k, torch::Tensor spm_l,
+std::vector<torch::Tensor> flex_spmv(torch::Tensor spm_k, torch::Tensor spm_l,
                         torch::Tensor row_offsets, 
                         torch::Tensor col_indices_i, torch::Tensor col_indices_j, 
-                        torch::Tensor vector_x, torch::Tensor vector_y) {
+                        torch::Tensor vector_x, 
+                        torch::Tensor output_y_reducer_i, 
+                        torch::Tensor output_y_reducer_j) {
 
   // Check input tensors are contiguous and on CUDA
   TORCH_CHECK(spm_k.is_cuda(), "spm_k must be a CUDA tensor");
@@ -25,7 +29,8 @@ torch::Tensor flex_spmv(torch::Tensor spm_k, torch::Tensor spm_l,
   TORCH_CHECK(col_indices_i.is_cuda(), "col_indices_i must be a CUDA tensor");
   TORCH_CHECK(col_indices_j.is_cuda(), "col_indices_j must be a CUDA tensor");
   TORCH_CHECK(vector_x.is_cuda(), "vector_x must be a CUDA tensor");
-  TORCH_CHECK(vector_y.is_cuda(), "vector_y must be a CUDA tensor");
+  TORCH_CHECK(output_y_reducer_i.is_cuda(), "output_y_reducer_i must be a CUDA tensor");
+  TORCH_CHECK(output_y_reducer_j.is_cuda(), "output_y_reducer_j must be a CUDA tensor");
 
   TORCH_CHECK(spm_k.is_contiguous(), "spm_k must be contiguous");
   TORCH_CHECK(spm_l.is_contiguous(), "spm_l must be contiguous");
@@ -35,7 +40,8 @@ torch::Tensor flex_spmv(torch::Tensor spm_k, torch::Tensor spm_l,
   TORCH_CHECK(col_indices_j.is_contiguous(),
               "col_indices_j must be contiguous");
   TORCH_CHECK(vector_x.is_contiguous(), "vector_x must be contiguous");
-  TORCH_CHECK(vector_y.is_contiguous(), "vector_y must be contiguous");
+  TORCH_CHECK(output_y_reducer_i.is_contiguous(), "output_y_reducer_i must be contiguous");
+  TORCH_CHECK(output_y_reducer_j.is_contiguous(), "output_y_reducer_j must be contiguous");
 
   // Get dimensions
   int num_rows = row_offsets.size(0) - 1;
@@ -46,13 +52,17 @@ torch::Tensor flex_spmv(torch::Tensor spm_k, torch::Tensor spm_l,
   if (spm_k.scalar_type() == torch::ScalarType::Float) {
     return launch_flex_spmv_cuda<float, int>(spm_k, spm_l, row_offsets,
                                              col_indices_i, col_indices_j,
-                                             vector_x, vector_y,
+                                             vector_x, 
+                                             output_y_reducer_i,
+                                             output_y_reducer_j,
                                              num_rows, num_cols,
                                              num_nonzeros);
   } else if (spm_k.scalar_type() == torch::ScalarType::Double) {
     return launch_flex_spmv_cuda<double, int>(spm_k, spm_l, row_offsets,
                                               col_indices_i, col_indices_j,
-                                              vector_x, vector_y,
+                                              vector_x, 
+                                              output_y_reducer_i,
+                                              output_y_reducer_j,
                                               num_rows, num_cols, 
                                               num_nonzeros);
   } else {

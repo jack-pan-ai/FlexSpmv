@@ -230,7 +230,8 @@ namespace merged
             CoordinateT tile_start_coord,       ///< [in] Starting coordinate of the merge tile
             CoordinateT tile_end_coord,         ///< [in] Ending coordinate of the merge tile
             int tile_num_rows,                  ///< [in] Number of rows in the merge tile
-            int tile_num_nonzeros               ///< [in] Number of non-zeros in the merge tile
+            int tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile
+            ValueT *output_vector_y              ///< [out] Output vector y
         )
         {
                         // Search for the thread's starting coordinate within the merge tile
@@ -377,10 +378,10 @@ namespace merged
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
                     {
                         atomicAdd(
-                            &spmv_params.d_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i],
+                            &output_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i],
                             s_partials[item + i * TILE_ITEMS]
                         );
-                        // spmv_params.d_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i] = s_partials[item + i * TILE_ITEMS];
+                        // output_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i] = s_partials[item + i * TILE_ITEMS];
                     }
                 }
             }
@@ -397,7 +398,7 @@ namespace merged
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
                     {
                         atomicAdd(
-                            &spmv_params.d_vector_y[tile_carry.key * DIM_OUTPUT_VECTOR_Y + i],
+                            &output_vector_y[tile_carry.key * DIM_OUTPUT_VECTOR_Y + i],
                             tile_carry.values[i]);
                     }
                 };
@@ -431,8 +432,8 @@ namespace merged
 
             CTA_SYNC();
 
-            // each reducer need s_tile_value_nonzeros to store the non-zero values
-            __shared__ ValueT s_tile_value_nonzeros[TILE_ITEMS * DIM_INPUT_VECTOR_X];
+            // [code generation]
+            ${reducer_smem_definitions}
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -451,15 +452,8 @@ namespace merged
 
             CTA_SYNC();
             // reduce the intermeidate computations
-            // [output] spmv_params.d_vector_y is the output in Global memeory
-            reduce(
-                s_tile_value_nonzeros,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile
-                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile
-                tile_start_coord,               ///< [in] Starting coordinate of the merge tile
-                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile
-                tile_num_rows,                  ///< [in] Number of rows in the merge tile
-                tile_num_nonzeros               ///< [in] Number of non-zeros in the merge tile
-            );
+            // [code generation]
+            ${reducer_code}
         }
 
 

@@ -134,7 +134,7 @@ struct Tensor
     }
 };
 
-// FlexParams [code generation]
+// FlexParams
 template <
     typename ValueT,  ///< Matrix and vector value type
     typename OffsetT> ///< Signed integer type for sequence offsets
@@ -143,7 +143,6 @@ struct FlexParams
     // [code generation]
     OffsetT *d_row_end_offsets;  ///< Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
     ${input_declarations_utils_code}
-    ValueT *d_vector_y;        ///< Pointer to the array of \p output vector <em>y</em>
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
     int num_nonzeros;            ///< Number of nonzero elements of matrix <b>A</b>.

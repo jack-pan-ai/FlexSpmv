@@ -16,6 +16,8 @@ setup(
             ],
             extra_compile_args={
                 'cxx': ['-O3', '-std=c++17', '-x cu'],  # Treat C++ files as CUDA files
+                # 'extra_cflags': ["-g", "-O0"],  # -G enables device debug info
+                # 'extra_cuda_cflags': ["-G", "-g", "-O0"],  # -G enables device debug info
                 'nvcc': [
                     '-O3',
                     '-std=c++17',

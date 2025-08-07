@@ -7,16 +7,20 @@ import string
 import easier as esr
 from easier.core.jit import EasierTracer
 
+# Import our extension
+import flex_spmv
+
 # Part 1: Define spring-mass system model
 class SpringMassSystem(esr.Module):
-    def __init__(self, spm_k, spm_l, vector_x, vector_y, row_end_offset, col_indices_i, col_indices_j, num_rows):
+    def __init__(self, spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows):
         super().__init__()
 
         # data
         self.spm_k = spm_k  # (N, 1)
         self.spm_l = spm_l  # (N, 1)
         self.vector_x = vector_x  # (N, D)
-        self.vector_y = vector_y  # (M, D)
+        self.output_y_reducer_i = output_y_reducer_i  # (M, D)
+        self.output_y_reducer_j = output_y_reducer_j  # (M, D)
         self.row_end_offset = row_end_offset # (M + 1)
         self.col_indices_i = col_indices_i # (N, 1)
         self.col_indices_j = col_indices_j # (N, 1)
@@ -24,7 +28,8 @@ class SpringMassSystem(esr.Module):
         # Selector for i and j, and reducer
         self.selector_i = esr.Selector(self.col_indices_i)
         self.selector_j = esr.Selector(self.col_indices_j)
-        self.reducer = esr.Reducer(self.row_end_offset, num_rows)
+        self.reducer_i = esr.Reducer(self.row_end_offset, num_rows)
+        self.reducer_j = esr.Reducer(self.row_end_offset, num_rows)
 
     def forward(self):
         # compute force
@@ -33,20 +38,24 @@ class SpringMassSystem(esr.Module):
         r_ij = r_j - r_i # (N, 2)
         norm_r_ij = torch.norm(r_ij, dim=1, keepdim=True) # (N, 1)
         e_ij = r_ij / norm_r_ij # (N, 2)
-        f_ij = self.spm_k * (norm_r_ij - self.spm_l) * e_ij # (N, 2)
-        f_i = self.reducer(f_ij) # (M, 2)
+        f_ij1 = self.spm_k * (norm_r_ij - self.spm_l) * e_ij # (N, 2)
+        f_ij2 = self.spm_k * (norm_r_ij * self.spm_l) * e_ij # (N, 2)
+        f_i1 = self.reducer_i(f_ij1) # (M, 2)
+        f_i2 = self.reducer_j(f_ij2) # (M, 2)
 
-        return f_i
+        return f_i1, f_i2
+        # return f_i2
 
 class SpringMassSystem_calculation():
-    def __init__(self, spm_k, spm_l, vector_x, vector_y, row_end_offset, col_indices_i, col_indices_j, num_rows):
+    def __init__(self, spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows):
         super().__init__()
 
         # data
         self.spm_k = spm_k  # (N, 1)
         self.spm_l = spm_l  # (N, 1)
         self.vector_x = vector_x  # (N, D)
-        self.vector_y = vector_y  # (M, D)
+        self.output_y_reducer_i = output_y_reducer_i  # (M, D)
+        self.output_y_reducer_j = output_y_reducer_j  # (M, D)
         self.row_end_offset = row_end_offset # (M + 1)
         self.col_indices_i = col_indices_i # (N, 1)
         self.col_indices_j = col_indices_j # (N, 1)
@@ -56,26 +65,52 @@ class SpringMassSystem_calculation():
         # compute force
         r_i = self.vector_x[self.col_indices_i] # (N, 2)
         r_j = self.vector_x[self.col_indices_j] # (N, 2)
-        r_ij = r_i - r_j # (N, 2)
+        r_ij = r_j - r_i # (N, 2)
         norm_r_ij = torch.norm(r_ij, dim=1, keepdim=True) # (N, 1)
         e_ij = r_ij / norm_r_ij # (N, 2)
-        f_ij = self.spm_k * (norm_r_ij - self.spm_l) * e_ij # (N, 2)
+        f_ij1 = self.spm_k * (norm_r_ij - self.spm_l) * e_ij # (N, 2)
+        f_ij2 = self.spm_k * (norm_r_ij * self.spm_l) * e_ij # (N, 2)
+        f_i1 = torch.zeros(self.num_rows, 2, device="cuda", dtype=f_ij1.dtype)
+        f_i2 = torch.zeros(self.num_rows, 2, device="cuda", dtype=f_ij2.dtype)
         # reduce f_ij to f_i based on row_end_offset
-        f_i = torch.zeros(self.num_rows, 2, device="cuda", dtype=f_ij.dtype)
         for i in range(self.num_rows):
-            f_i[i] = torch.sum(f_ij[self.row_end_offset[i]:self.row_end_offset[i+1]], dim=0)
-        return f_i
+            f_i1[i] = torch.sum(f_ij1[self.row_end_offset[i]:self.row_end_offset[i+1]], dim=0)
+            f_i2[i] = torch.sum(f_ij2[self.row_end_offset[i]:self.row_end_offset[i+1]], dim=0)
+        # return f_i1, f_i2
+        return f_i1, f_i2
+
 
 # Part 2: Trace the model with torch.fx
 def trace_model(model):
     tracer = EasierTracer()
     traced_model = tracer.trace(model)
     print("FX Graph:")
+    info_nodes = {
+        "vector_x": {"shape": (2,)},
+        "vector_x1": {"shape": (2,)},
+        "sub": {"shape": (2,)},
+        "norm": {"shape": (1,)},
+        "truediv": {"shape": (2,)},
+        "spm_l": {"shape": (1,)},
+        "spm_k": {"shape": (1,)},
+        "spm_l_1": {"shape": (1,)},
+        "spm_k_1": {"shape": (1,)},
+        "sub_1": {"shape": (1,)},
+        "mul_1": {"shape": (2,)},
+        "mul": {"shape": (1,)},
+        "mul_2": {"shape": (1,)},
+        "mul_3": {"shape": (1,)},
+        "mul_4": {"shape": (2,)},
+        "selector_i": {"shape": (2,)},
+        "selector_j": {"shape": (2,)},
+        "reducer_i": {"shape": (2,)},
+        "reducer_j": {"shape": (2,)}
+    }
     traced_model.print_tabular()    
-    return traced_model
+    return traced_model, info_nodes
 
 # Part 3: Generate CUDA code from the graph
-def generate_cuda_code_from_graph(traced_model):
+def generate_cuda_code_from_graph(traced_model, info_nodes):
     # Create directory for generated code
     os.makedirs("cuda_code", exist_ok=True)
     
@@ -84,13 +119,16 @@ def generate_cuda_code_from_graph(traced_model):
     input_keys = set()
     selector_register = []
     map_operations = []
+    reducer_operations = []
     output_var = None
 
-#---------------------------------
-# Analyze the graph and extract operations, 1) input and output, 2) selector, 3) map
-#---------------------------------
+#  -------------------------------------------------------------
+#  Analyze the graph and extract operations, 1) input and output, 2) selector, 3) map
+#  -------------------------------------------------------------
 
-    # obtain the input and output
+    #  -------------------------------------------------------------
+    #  obtain the input and output
+    #  -------------------------------------------------------------
     for i in range(len(traced_model.nodes)):
         node = list(traced_model.nodes)[i - 1]
         if node.op == 'get_attr':
@@ -113,10 +151,21 @@ def generate_cuda_code_from_graph(traced_model):
                         "dtype": "int"
                     }
                 )
+            elif 'reducer' in str(node.target):
+                target_name = 'reducer'
+                inputs.append(
+                    {
+                        "name": "output_y_" + node.target,
+                        "target": node.target,
+                        "dtype": "ValueT"
+                    }
+                )
         elif node.op == 'output':
-            output_var = node.args[0].name
+            output_var = node.args[0]
     
-    # obtain the selector in intermediate register
+    #  -------------------------------------------------------------
+    #  obtain the selector in intermediate register
+    #  -------------------------------------------------------------
     for i in range(len(traced_model.nodes)):
         # current node and forward node 
         node_current = list(traced_model.nodes)[i]
@@ -145,18 +194,35 @@ def generate_cuda_code_from_graph(traced_model):
                         "selector_name": None
                     }
                 )
-    # obtain the map operations
+
+    # # debug print
+    # for inter in selector_register:
+    #     print(f"Selector register: {inter}")
+
+    #  -------------------------------------------------------------
+    #  obtain the map operations
+    #  -------------------------------------------------------------
     for i in range(len(traced_model.nodes)):
         node = list(traced_model.nodes)[i]
         if node.op == 'call_module':
-            if 'selector' in str(node.target) or 'reducer' in str(node.target):
+            if 'selector' in str(node.target):
                 continue
+            elif 'reducer' in str(node.target):
+                target_name = 'reducer'
+                map_operations.append({
+                    'output': node.name,
+                    'op': target_name,
+                    'args': [arg.name if hasattr(arg, 'name') else arg for arg in node.args],
+                    'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None],
+                    'shape': info_nodes[node.name]['shape']
+                })
             else:
                 map_operations.append({
                     'output': node.name,
                     'op': node.target,
                     'args': [arg.name if hasattr(arg, 'name') else arg for arg in node.args],
-                    'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None]
+                    'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None],
+                    'shape': info_nodes[node.name]['shape']
                 })
         elif node.op == 'call_function' or node.op == 'call_method':
             target_name = str(node.target).split('.')[-1]
@@ -177,25 +243,41 @@ def generate_cuda_code_from_graph(traced_model):
                 'output': node.name,
                 'op': target_name,
                 'args': [arg.name if hasattr(arg, 'name') else arg for arg in node.args],
-                'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None]
+                'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None],
+                'shape': info_nodes[node.name]['shape']
             })
         elif node.op == 'output':
-            output_var = node.args[0].name
+            output_var = node.args[0]
     
+    #  -------------------------------------------------------------
+    #  obtain the reducer operations
+    #  -------------------------------------------------------------
+    for i in range(len(traced_model.nodes)):
+        node = list(traced_model.nodes)[i]
+        if 'reducer' in str(node.target):
+            reducer_operations.append({
+                'output': node.name,
+                'op': node.target,
+                'args': [arg.name if hasattr(arg, 'name') else arg for arg in node.args],
+                'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None]
+            })
+
     # # debug print
     # for inp in inputs:
     #     print(f"Input: {inp}")
-    for inter in selector_register:
-        print(f"Selector register: {inter}")
+    # for inter in selector_register:
+    #     print(f"Selector register: {inter}")
     # for op in map_operations:
     #     print(f"Operation: {op}")
     # print(f"Output: {output_var}")
 
-#---------------------------------
-# Generate the CUDA code
-#---------------------------------
+#  -------------------------------------------------------------
+#  Generate the CUDA code
+#  -------------------------------------------------------------
 
-    # Generate the input code
+    #  -------------------------------------------------------------
+    #  Generate the input code
+    #  -------------------------------------------------------------
     input_declarations_code = []
     input_init_code = []
     input_declarations_utils_code = []
@@ -207,9 +289,12 @@ def generate_cuda_code_from_graph(traced_model):
             input_init_code.append(f"    {inp['target'] + '_ptr'}(spmv_params.{inp['target'] + '_ptr'}), \n")
         else:
             # vector value and spm nnz
-            input_declarations_utils_code.append(f"  ValueT *{inp['target'] + '_ptr'}; \n")
-            input_declarations_code.append(f"  VectorValueIteratorT {inp['target'] + '_ptr'}; \n")
-            input_init_code.append(f"    {inp['target'] + '_ptr'}(spmv_params.{inp['target'] + '_ptr'}), \n")
+            if 'reducer' in str(inp['target']):
+                input_declarations_utils_code.append(f"  ValueT *{"output_y_" + inp['target']}; \n")
+            else:
+                input_declarations_utils_code.append(f"  ValueT *{inp['target'] + '_ptr'}; \n")
+                input_declarations_code.append(f"  VectorValueIteratorT {inp['target'] + '_ptr'}; \n")
+                input_init_code.append(f"    {inp['target'] + '_ptr'}(spmv_params.{inp['target'] + '_ptr'}), \n")
     
     # # debug print
     # for inp in input_declarations_utils_code:
@@ -219,7 +304,9 @@ def generate_cuda_code_from_graph(traced_model):
     # for inp in input_init_code:
     #     print(f"Input init code: {inp}")
     
-    # Generate the selector register code
+    #  -------------------------------------------------------------
+    #  Generate the selector register code
+    #  -------------------------------------------------------------
     selector_code = []
     for inter in selector_register:
         if inter['selector'] == 1:
@@ -236,75 +323,125 @@ def generate_cuda_code_from_graph(traced_model):
     # for inter in selector_code:
     #     print(f"Selector code: {inter}")
     
-    # Generate the CUDA kernel code (map operations)
+    #  -------------------------------------------------------------
+    #  Generate the CUDA kernel code (map operations)
+    #  -------------------------------------------------------------
     map_code = []
     for op in map_operations:
-        if op['op'] == 'add':
+        op_name = op['op']
+        shape = op['shape']
+        if op_name == 'add':
             map_code.append(f"    TensorT {op['output']} = {op['args'][0]} + {op['args'][1]}; \n")
-        elif op['op'] == 'mul':
-            if op['output'] != 'mul':
+        elif op_name == 'mul':
+            if shape == (2,):
                 map_code.append(f"    TensorT {op['output']} = {op['args'][0]} * {op['args'][1]}; \n")
-            else:
+            elif shape == (1,):
                 map_code.append(f"    ValueT {op['output']} = {op['args'][0]} * {op['args'][1]}; \n")
-        elif op['op'] == 'sub':
-            if op['output'] == 'sub':
-                map_code.append(f"    TensorT {op['output']} = {op['args'][0]} - {op['args'][1]}; \n")
             else:
+                raise ValueError(f"Shape {shape} not supported")
+        elif op_name == 'sub':
+            if shape == (2,):
+                map_code.append(f"    TensorT {op['output']} = {op['args'][0]} - {op['args'][1]}; \n")
+            elif shape == (1,):
                 map_code.append(f"    ValueT {op['output']} = {op['args'][0]} - {op['args'][1]}; \n")
-        elif op['op'] == 'norm':
+            else:
+                raise ValueError(f"Shape {shape} not supported")
+        elif op_name == 'norm':
             map_code.append(f"    ValueT {op['output']} = {op['args'][0]}.l2Norm(); \n")
-        elif op['op'] == 'truediv':
+        elif op_name == 'truediv':
             map_code.append(f"    TensorT {op['output']} = {op['args'][0]} / {op['args'][1]}; \n")
+        elif op_name == 'reducer':
+            # add the register results to the SMEM
+            map_code.append(f"    #pragma unroll\n")
+            map_code.append(f"    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) \n")
+            map_code.append(f"      s_tile_value_{op['output']}[nonzero_idx + i * TILE_ITEMS] = {op['args'][0]}.values[i]; \n")
         else:
             # error
-            raise ValueError(f"Operation {op['op']} not supported")
-    # add the register results to the SMEM
-    map_code.append(f"    #pragma unroll\n    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) \n    {{ \n        s_tile_value_nonzeros[nonzero_idx + i * TILE_ITEMS] = {op['output']}.values[i]; \n    }}")
+            raise ValueError(f"Operation {op_name} not supported")
 
     # # Debug print to check kernel operations
     # print("Generated kernel operations:")
     # for op in map_code:
     #     print(op)
-        
-    # Create directories for generated code if they don't exist
-    os.makedirs("include-gen", exist_ok=True)
+
+    #  -------------------------------------------------------------
+    #  Generate the reducer code
+    #  -------------------------------------------------------------
+    reducer_smem_definitions = []
+    reducer_code = []
+    for op in reducer_operations:
+        reducer_smem_definitions.append(f"   // each reducer need SMEM to store the non-zero values \n")
+        reducer_smem_definitions.append(f"   __shared__ ValueT s_tile_value_{op['output']}[TILE_ITEMS * DIM_INPUT_VECTOR_X]; \n")
+        reducer_code.append(f"   reduce( \n")
+        reducer_code.append(f"                s_tile_value_{op['output']},          ///< [in, code gen] Shared memory array of non-zero values for the merge tile \n")
+        reducer_code.append(f"                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile \n")
+        reducer_code.append(f"                tile_start_coord,               ///< [in] Starting coordinate of the merge tile \n")
+        reducer_code.append(f"                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile \n")
+        reducer_code.append(f"                tile_num_rows,                  ///< [in] Number of rows in the merge tile \n")
+        reducer_code.append(f"                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile \n")
+        reducer_code.append(f"                spmv_params.output_y_{op['output']}                  ///< [out] Output vector y \n")
+        reducer_code.append(f"            ); \n")
+        reducer_code.append(f"   CTA_SYNC(); \n")
     
-    # Read template files
+    # # debug print
+    # for op in reducer_smem_definitions:
+    #     print(f"Reducer SMEM definitions: {op}")
+    # for op in reducer_code:
+    #     print(f"Reducer code: {op}")
+        
+    #  -------------------------------------------------------------
+    #  Create directories for generated code if they don't exist
+    #  -------------------------------------------------------------
+    os.makedirs("include", exist_ok=True)
+    
+    #  -------------------------------------------------------------
+    #  Read template files
+    #  -------------------------------------------------------------
     with open("cuda_template/merged_agent_spmv_template.cuh", "r") as f:
         kernel_agent_template = f.read()
     
     with open("cuda_template/merged_utils_template.cuh", "r") as f:
         utils_template = f.read()
     
-    # Apply templates using string.Template
-    # Join the lists into strings for template substitution
+    #  -------------------------------------------------------------
+    #  Apply templates using string.Template
+    #  -------------------------------------------------------------
     input_declarations_str = ''.join(input_declarations_code)
     input_init_str = ''.join(input_init_code)
     selector_str = ''.join(selector_code)
     map_str = ''.join(map_code)
-    
+    reducer_smem_definitions_str = ''.join(reducer_smem_definitions)
+    reducer_code_str = ''.join(reducer_code)
     agent_kernel_code = string.Template(kernel_agent_template).substitute(
         input_declarations_code=input_declarations_str,
         input_init_code=input_init_str,
         selector_code=selector_str,
-        map_code=map_str
+        map_code=map_str,
+        reducer_smem_definitions=reducer_smem_definitions_str,
+        reducer_code=reducer_code_str
     )
     
-    # Join the list of input declarations into a single string
+    #  -------------------------------------------------------------
+    #  Join the list of input declarations into a single string
+    #  -------------------------------------------------------------
     input_declarations_utils_str = ''.join(input_declarations_utils_code)
     
     utils_code = string.Template(utils_template).substitute(
         input_declarations_utils_code=input_declarations_utils_str
     )
     
-    # Write files
-    with open("include-gen/merged_agent_spmv.cuh", "w") as f:
+    #  -------------------------------------------------------------
+    #  Write files
+    #  -------------------------------------------------------------
+    with open("include/merged_agent_spmv.cuh", "w") as f:
         f.write(agent_kernel_code)
     
-    with open("include-gen/merged_utils.cuh", "w") as f:
+    with open("include/merged_utils.cuh", "w") as f:
         f.write(utils_code)
     
-    # print("CUDA code generated successfully!")
+    #  -------------------------------------------------------------
+    print("CUDA code generated successfully!")
+    #  -------------------------------------------------------------
 
 # Main function to run the entire pipeline
 def main():
@@ -314,16 +451,19 @@ def main():
     num_cols = 10
     num_rows = 5
     dim_x = 2
-    spm_k = torch.rand(num_nnz, 1, device="cuda")  # (N, 1)
-    spm_l = torch.rand(num_nnz, 1, device="cuda")  # (N, 1)
-    vector_x = torch.rand(num_cols, dim_x, device="cuda")  # (N, D)
-    vector_y = torch.zeros(num_rows, dim_x, device="cuda")  # (M, D)
-    row_end_offset = torch.sort(torch.randint(0, num_nnz + 1, (num_rows,), device="cuda"))[0] # (M + 1)
-    row_end_offset = torch.cat([torch.zeros(1, device="cuda", dtype=row_end_offset.dtype), row_end_offset])
+    spm_k = torch.rand(num_nnz, 1, device="cuda", dtype=torch.float32)  # (N, 1)
+    # spm_l = torch.rand(num_nnz, 1, device="cuda", dtype=torch.float32)  # (N, 1)
+    spm_l = spm_k.clone()
+    vector_x = torch.rand(num_cols, dim_x, device="cuda", dtype=torch.float32)  # (N, D)
+    output_y_reducer_i = torch.zeros(num_rows, dim_x, device="cuda", dtype=torch.float32)  # (M, D)
+    output_y_reducer_j = torch.zeros(num_rows, dim_x, device="cuda", dtype=torch.float32)  # (M, D)
+    row_end_offset = torch.sort(torch.randint(0, num_nnz + 1, (num_rows,), device="cuda", dtype=torch.int32))[0] # (M + 1)
+    row_end_offset = torch.cat([torch.zeros(1, device="cuda", dtype=torch.int32), row_end_offset])
     row_end_offset = row_end_offset
+    print(f"row_end_offset: {row_end_offset}")
     # Ensure that i and j are different for each point
-    col_indices_i = torch.randint(0, num_cols, (num_nnz,), device="cuda")
-    col_indices_j = torch.empty(num_nnz, dtype=torch.long, device="cuda")
+    col_indices_i = torch.randint(0, num_cols, (num_nnz,), device="cuda", dtype=torch.int32)
+    col_indices_j = torch.empty(num_nnz, dtype=torch.int32, device="cuda")
     for idx in range(num_nnz):
         i_val = col_indices_i[idx].item()
         # pick a random j != i
@@ -334,22 +474,46 @@ def main():
 
     # pytorch model for code generation
     model = SpringMassSystem(
-        spm_k, spm_l, vector_x, vector_y, row_end_offset, col_indices_i, col_indices_j, num_rows
+        spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows
     )
     # python model for verification
     model_calculation = SpringMassSystem_calculation(
-        spm_k, spm_l, vector_x, vector_y, row_end_offset, col_indices_i, col_indices_j, num_rows
+        spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows
     )
 
     print("Step 1: Tracing model with torch.fx")
-    traced_model = trace_model(model)
+    traced_model, info_nodes = trace_model(model)
     
     # run the model
-    f_i = model_calculation.forward()
-    print(f"f_i: {f_i}")
+    results_gold_1, results_gold_2 = model_calculation.forward()
+    # results_gold_1 = model_calculation.forward()
 
     print("\nStep 2: Generating CUDA code from the graph")
-    generate_cuda_code_from_graph(traced_model)
+    generate_cuda_code_from_graph(traced_model, info_nodes)
+
+    # run the model
+    comp_results_1, comp_results_2 = flex_spmv.flex_spmv(
+        spm_k, spm_l, row_end_offset, 
+        col_indices_i, col_indices_j, 
+        vector_x, 
+        output_y_reducer_i, 
+        output_y_reducer_j)
+
+    # check the results
+    results_gold_1 = results_gold_1.cpu()
+    results_gold_2 = results_gold_2.cpu()
+    comp_results_1 = comp_results_1.cpu()
+    comp_results_2 = comp_results_2.cpu()
+    print(f"Results gold 1: {results_gold_1}")
+    print(f"Results flex_spmv 1: {comp_results_1}")
+    print(f"Results difference 1: {torch.norm(results_gold_1 - comp_results_1)}")
+    print(f"Results gold 2: {results_gold_2}")
+    print(f"Results flex_spmv 2: {comp_results_2}")
+    print(f"Results difference 2: {torch.norm(results_gold_2 - comp_results_2)}")
+    if torch.norm(results_gold_1 - comp_results_1) < 1e-6 and torch.norm(results_gold_2 - comp_results_2) < 1e-6:
+        print("Results are the same")
+    else:
+        print("Results are different") 
 
 if __name__ == "__main__":
     main()

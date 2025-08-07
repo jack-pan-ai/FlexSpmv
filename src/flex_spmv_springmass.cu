@@ -228,7 +228,7 @@ float TestGpuMergeCsrmv_from_scratch(
 
     if (!g_quiet)
     {
-        int compare = CompareDeviceResults(reference_vector_y_out, params.d_vector_y, params.num_rows * DIM_OUTPUT_VECTOR_Y, true, g_verbose);
+        int compare = CompareDeviceResults(reference_vector_y_out, params.output_y_reducer_j, params.num_rows * DIM_OUTPUT_VECTOR_Y, true, g_verbose);
         printf("\t%s\n", compare ? "FAIL" : "PASS"); fflush(stdout);
     }
 
@@ -355,21 +355,26 @@ void RunTest(
     // FlexSpmvParams<ValueT, OffsetT> params;
     FlexParams<ValueT, OffsetT> params;
 
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_spm_nnz,          sizeof(ValueT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_k_ptr,          sizeof(ValueT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_l_ptr,          sizeof(ValueT) * csr_matrix.num_nonzeros));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets, sizeof(OffsetT) * (csr_matrix.num_rows + 1)));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_vector_x,        sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_vector_y,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_i_ptr, sizeof(OffsetT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_j_ptr, sizeof(OffsetT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.vector_x_ptr,        sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_i,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_j,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
     params.num_rows         = csr_matrix.num_rows;
     params.num_cols         = csr_matrix.num_cols;
     params.num_nonzeros     = csr_matrix.num_nonzeros;
 
-    CubDebugExit(cudaMemcpy((void*) params.d_spm_nnz,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.spm_k_ptr,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.spm_l_ptr,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_row_end_offsets,   (void*) csr_matrix.row_offsets,     sizeof(OffsetT) * (csr_matrix.num_rows + 1), cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.d_column_indices_i,  (void*) csr_matrix.column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.d_column_indices_j,  (void*) csr_matrix.column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-      CubDebugExit(cudaMemcpy((void*) params.d_vector_x,          (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.selector_i_ptr,      (void*) csr_matrix.column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.selector_j_ptr,      (void*) csr_matrix.column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.vector_x_ptr,        (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.output_y_reducer_i,  (void*) vector_y_in,                   sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.output_y_reducer_j,  (void*) vector_y_in,                   sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
 
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
@@ -378,12 +383,14 @@ void RunTest(
     DisplayPerf(device_giga_bandwidth, setup_ms, avg_ms, csr_matrix);    
     
     // Cleanup
-    if (params.d_spm_nnz)           CubDebugExit(g_allocator.DeviceFree(params.d_spm_nnz));
+    if (params.spm_k_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_k_ptr));
+    if (params.spm_l_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_l_ptr));
     if (params.d_row_end_offsets)   CubDebugExit(g_allocator.DeviceFree(params.d_row_end_offsets));
-    if (params.d_column_indices_i)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_i));
-    if (params.d_column_indices_j)  CubDebugExit(g_allocator.DeviceFree(params.d_column_indices_j));
-    if (params.d_vector_x)          CubDebugExit(g_allocator.DeviceFree(params.d_vector_x));
-    if (params.d_vector_y)          CubDebugExit(g_allocator.DeviceFree(params.d_vector_y));
+    if (params.selector_i_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_i_ptr));
+    if (params.selector_j_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_j_ptr));
+    if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
+    if (params.output_y_reducer_i)  CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_i));
+    if (params.output_y_reducer_j)  CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_j));
 
     if (vector_x)                   delete[] vector_x;
     if (vector_y_in)                delete[] vector_y_in;

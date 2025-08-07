@@ -10,27 +10,29 @@
 cub::CachingDeviceAllocator g_allocator(true);
 
 template <typename ValueT, typename OffsetT>
-torch::Tensor launch_flex_spmv_cuda(
+std::vector<torch::Tensor> launch_flex_spmv_cuda(
     torch::Tensor spm_k,
     torch::Tensor spm_l,
     torch::Tensor row_offsets,
     torch::Tensor col_indices_i,
     torch::Tensor col_indices_j,
     torch::Tensor vector_x,
-    torch::Tensor vector_y,
+    torch::Tensor output_y_reducer_i,
+    torch::Tensor output_y_reducer_j,
     int num_rows,
     int num_cols,
     int num_nonzeros) {
     
     // Setup FlexParams struct with PyTorch tensor data
     FlexParams<ValueT, OffsetT> params;
+    params.d_row_end_offsets = row_offsets.data_ptr<OffsetT>();
     params.spm_k_ptr = spm_k.data_ptr<ValueT>();
-    // params.d_spm_nnz = spm_l.data_ptr<ValueT>(); // use it later
-    params.row_end_offsets_ptr = row_offsets.data_ptr<OffsetT>();
+    params.spm_l_ptr = spm_l.data_ptr<ValueT>();
     params.selector_i_ptr = col_indices_i.data_ptr<OffsetT>();
     params.selector_j_ptr = col_indices_j.data_ptr<OffsetT>();
     params.vector_x_ptr = vector_x.data_ptr<ValueT>();
-    params.d_vector_y = vector_y.data_ptr<ValueT>();
+    params.output_y_reducer_i = output_y_reducer_i.data_ptr<ValueT>();
+    params.output_y_reducer_j = output_y_reducer_j.data_ptr<ValueT>();
     params.num_rows = num_rows;
     params.num_cols = num_cols;
     params.num_nonzeros = num_nonzeros;
@@ -71,30 +73,33 @@ torch::Tensor launch_flex_spmv_cuda(
     // Free temporary storage
     g_allocator.DeviceFree(d_temp_storage);
     
-    return vector_y;
+    return {output_y_reducer_i, output_y_reducer_j};
+    // return {output_y_reducer_j};
 }
 
 // Explicit instantiation for float and double types
-template torch::Tensor launch_flex_spmv_cuda<float, int>(
+template std::vector<torch::Tensor> launch_flex_spmv_cuda<float, int>(
     torch::Tensor spm_k,
     torch::Tensor spm_l,
     torch::Tensor row_offsets,
     torch::Tensor col_indices_i,
     torch::Tensor col_indices_j,
     torch::Tensor vector_x,
-    torch::Tensor vector_y,
+    torch::Tensor output_y_reducer_i,
+    torch::Tensor output_y_reducer_j,
     int num_rows,
     int num_cols,
     int num_nonzeros);
 
-template torch::Tensor launch_flex_spmv_cuda<double, int>(
+template std::vector<torch::Tensor> launch_flex_spmv_cuda<double, int>(
     torch::Tensor spm_k,
     torch::Tensor spm_l,
     torch::Tensor row_offsets,
     torch::Tensor col_indices_i,
     torch::Tensor col_indices_j,
     torch::Tensor vector_x,
-    torch::Tensor vector_y,
+    torch::Tensor output_y_reducer_i,
+    torch::Tensor output_y_reducer_j,
     int num_rows,
     int num_cols,
     int num_nonzeros); 
