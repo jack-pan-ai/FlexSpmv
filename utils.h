@@ -765,7 +765,6 @@ void DisplayDeviceResults(
     // Cleanup
     if (h_data) free(h_data);
 }
-
 /**
  * Verify the contents of a device array match those
  * of a host array
@@ -774,26 +773,28 @@ template <typename S, typename T>
 int CompareDeviceResults(
     S *h_reference,
     T *d_data,
+    T *d_data1,
     size_t num_items,
     bool verbose = true,
     bool display_data = false)
 {
     // Allocate array on host
-    T *h_data = (T*) malloc(num_items * sizeof(T));
+    T *h_data = (T*) malloc(num_items * sizeof(T) * 2);
 
     // Copy data back
     cudaMemcpy(h_data, d_data, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_data + num_items, d_data1, sizeof(T) * num_items, cudaMemcpyDeviceToHost);
 
     // Display data
     if (display_data)
     {
         printf("Reference:\n");
-        for (int i = 0; i < int(num_items); i++)
+        for (int i = 0; i < int(num_items) * 2; i++)
         {
             std::cout << h_reference[i] << ", ";
         }
         printf("\n\nComputed:\n");
-        for (int i = 0; i < int(num_items); i++)
+        for (int i = 0; i < int(num_items) * 2; i++)
         {
             std::cout << h_data[i] << ", ";
         }
@@ -801,7 +802,7 @@ int CompareDeviceResults(
     }
 
     // Check
-    int retval = CompareResults(h_data, h_reference, num_items, verbose);
+    int retval = CompareResults(h_data, h_reference, num_items * 2, verbose);
 
     // Cleanup
     if (h_data) free(h_data);

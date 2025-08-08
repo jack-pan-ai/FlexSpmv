@@ -199,12 +199,13 @@ namespace merged
         FlexParams<ValueT, OffsetT> &spmv_params;
 
         // [code generation]
-        RowOffsetsIteratorT wd_row_end_offsets; ///< Wrapped Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
-        VectorValueIteratorT vector_x_ptr;
-        ColumnIndicesIteratorT selector_i_ptr;
-        ColumnIndicesIteratorT selector_j_ptr;
-        VectorValueIteratorT spm_l_ptr;
-        VectorValueIteratorT spm_k_ptr;
+        RowOffsetsIteratorT wd_row_end_offsets;   ///< Wrapped Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
+          VectorValueIteratorT vector_x_ptr; 
+  ColumnIndicesIteratorT selector_i_ptr; 
+  ColumnIndicesIteratorT selector_j_ptr; 
+  VectorValueIteratorT spm_l_ptr; 
+  VectorValueIteratorT spm_k_ptr; 
+
 
         //---------------------------------------------------------------------
         // Constructor
@@ -219,11 +220,11 @@ namespace merged
             FlexParams<ValueT, OffsetT> &spmv_params) ///< SpMV input parameter bundle
             : temp_storage(temp_storage.Alias()),
               spmv_params(spmv_params),
-              vector_x_ptr(spmv_params.vector_x_ptr),
-              selector_i_ptr(spmv_params.selector_i_ptr),
-              selector_j_ptr(spmv_params.selector_j_ptr),
-              spm_l_ptr(spmv_params.spm_l_ptr),
-              spm_k_ptr(spmv_params.spm_k_ptr),
+                  vector_x_ptr(spmv_params.vector_x_ptr), 
+    selector_i_ptr(spmv_params.selector_i_ptr), 
+    selector_j_ptr(spmv_params.selector_j_ptr), 
+    spm_l_ptr(spmv_params.spm_l_ptr), 
+    spm_k_ptr(spmv_params.spm_k_ptr), 
 
               wd_row_end_offsets(spmv_params.d_row_end_offsets)
         {
@@ -234,16 +235,16 @@ namespace merged
         //---------------------------------------------------------------------
 
         __device__ __forceinline__ void reduce(
-            ValueT *s_tile_value_nonzeros,   ///< [in, code gen] Shared memory array of non-zero values for the merge tile
-            OffsetT *s_tile_row_end_offsets, ///< [in, code gen] Shared memory array of row end offsets for the merge tile
-            CoordinateT tile_start_coord,    ///< [in] Starting coordinate of the merge tile
-            CoordinateT tile_end_coord,      ///< [in] Ending coordinate of the merge tile
-            int tile_num_rows,               ///< [in] Number of rows in the merge tile
-            int tile_num_nonzeros,           ///< [in] Number of non-zeros in the merge tile
-            ValueT *output_vector_y          ///< [out] Output vector y
+            ValueT *s_tile_value_nonzeros,      ///< [in, code gen] Shared memory array of non-zero values for the merge tile
+            OffsetT *s_tile_row_end_offsets,    ///< [in, code gen] Shared memory array of row end offsets for the merge tile
+            CoordinateT tile_start_coord,       ///< [in] Starting coordinate of the merge tile
+            CoordinateT tile_end_coord,         ///< [in] Ending coordinate of the merge tile
+            int tile_num_rows,                  ///< [in] Number of rows in the merge tile
+            int tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile
+            ValueT *output_vector_y              ///< [out] Output vector y
         )
         {
-            // Search for the thread's starting coordinate within the merge tile
+                        // Search for the thread's starting coordinate within the merge tile
             CountingInputIterator<OffsetT> tile_nonzero_indices(tile_start_coord.y);
             CoordinateT thread_start_coord;
 
@@ -261,11 +262,12 @@ namespace merged
             CoordinateT thread_current_coord = thread_start_coord;
             TensorT scan_segment[ITEMS_PER_THREAD];
             ValueT running_total[DIM_OUTPUT_VECTOR_Y];
-#pragma unroll
+            #pragma unroll
             for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
             {
                 running_total[i] = 0.0;
             }
+            
 
             OffsetT row_end_offset = s_tile_row_end_offsets[thread_current_coord.x];
             ValueT *nonzero = s_tile_value_nonzeros + thread_current_coord.y;
@@ -333,7 +335,7 @@ namespace merged
 
                 CTA_SYNC();
                 // Scan downsweep and scatter
-                // memory reuse for the partial results
+                // memory reuse for the partial results 
                 // TILE_ITEMS is used to avoid bank conflict
                 // ValueT *s_partials = &temp_storage.aliasable.merge_items[0].nonzero;
                 ValueT *s_partials = s_tile_value_nonzeros;
@@ -382,12 +384,13 @@ namespace merged
 #pragma unroll 1
                 for (int item = threadIdx.x; item < tile_num_rows; item += BLOCK_THREADS)
                 {
-#pragma unroll
+                    #pragma unroll
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
                     {
                         atomicAdd(
                             &output_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i],
-                            s_partials[item + i * TILE_ITEMS]);
+                            s_partials[item + i * TILE_ITEMS]
+                        );
                         // output_vector_y[tile_start_coord.x * DIM_OUTPUT_VECTOR_Y + item * DIM_OUTPUT_VECTOR_Y + i] = s_partials[item + i * TILE_ITEMS];
                     }
                 }
@@ -401,7 +404,7 @@ namespace merged
                 tile_carry.key += tile_start_coord.x;
                 if (tile_carry.key < spmv_params.num_rows)
                 {
-#pragma unroll
+                    #pragma unroll
                     for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; i++)
                     {
                         atomicAdd(
@@ -424,8 +427,9 @@ namespace merged
             int tile_num_rows = tile_end_coord.x - tile_start_coord.x;
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
-            // shared memory reused is disabled
-            OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            //shared memory reused is disabled 
+            // OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            __shared__ OffsetT s_tile_row_end_offsets[TILE_ITEMS];
 
 // Gather the row end-offsets for the merge tile into shared memory
 #pragma unroll 1
@@ -440,10 +444,11 @@ namespace merged
             CTA_SYNC();
 
             // [code generation]
-            // each reducer need SMEM to store the non-zero values
-            __shared__ ValueT s_tile_value_reducer_i[TILE_ITEMS * DIM_INPUT_VECTOR_X];
-            // each reducer need SMEM to store the non-zero values
-            __shared__ ValueT s_tile_value_reducer_j[TILE_ITEMS * DIM_INPUT_VECTOR_X];
+               // each reducer need SMEM to store the non-zero values 
+   __shared__ ValueT s_tile_value_reducer_i[TILE_ITEMS * DIM_INPUT_VECTOR_X]; 
+   // each reducer need SMEM to store the non-zero values 
+   __shared__ ValueT s_tile_value_reducer_j[TILE_ITEMS * DIM_INPUT_VECTOR_X]; 
+
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -455,71 +460,75 @@ namespace merged
                 if (nonzero_idx < tile_num_nonzeros)
                 {
                     // [code generation]
-                    ColumnIndicesIteratorT vector_x_ptr_current = selector_i_ptr + tile_start_coord.y + nonzero_idx;
-                    TensorT selector_i;
-#pragma unroll
-                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
-                    {
-                        selector_i.values[i] = vector_x_ptr[*vector_x_ptr_current * DIM_INPUT_VECTOR_X + i];
-                    }
-                    ColumnIndicesIteratorT vector_x_1_ptr_current = selector_j_ptr + tile_start_coord.y + nonzero_idx;
-                    TensorT selector_j;
-#pragma unroll
-                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
-                    {
-                        selector_j.values[i] = vector_x_ptr[*vector_x_1_ptr_current * DIM_INPUT_VECTOR_X + i];
-                    }
-                    int spm_l_idx = tile_start_coord.y + nonzero_idx;
-                    ValueT spm_l = spm_l_ptr[spm_l_idx];
-                    int spm_k_idx = tile_start_coord.y + nonzero_idx;
-                    ValueT spm_k = spm_k_ptr[spm_k_idx];
-                    int spm_l_1_idx = tile_start_coord.y + nonzero_idx;
-                    ValueT spm_l_1 = spm_l_ptr[spm_l_1_idx];
-                    int spm_k_1_idx = tile_start_coord.y + nonzero_idx;
-                    ValueT spm_k_1 = spm_k_ptr[spm_k_1_idx];
+                        ColumnIndicesIteratorT vector_x_ptr_current = selector_i_ptr + tile_start_coord.y + nonzero_idx; 
+    TensorT selector_i; 
+    #pragma unroll
+    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+    { 
+        selector_i.values[i] = vector_x_ptr[*vector_x_ptr_current * DIM_INPUT_VECTOR_X + i]; 
+    } 
+    ColumnIndicesIteratorT vector_x_1_ptr_current = selector_j_ptr + tile_start_coord.y + nonzero_idx; 
+    TensorT selector_j; 
+    #pragma unroll
+    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+    { 
+        selector_j.values[i] = vector_x_ptr[*vector_x_1_ptr_current * DIM_INPUT_VECTOR_X + i]; 
+    } 
+    int spm_l_idx = tile_start_coord.y + nonzero_idx; 
+    ValueT spm_l = spm_l_ptr[spm_l_idx]; 
+    int spm_k_idx = tile_start_coord.y + nonzero_idx; 
+    ValueT spm_k = spm_k_ptr[spm_k_idx]; 
+    int spm_l_1_idx = tile_start_coord.y + nonzero_idx; 
+    ValueT spm_l_1 = spm_l_ptr[spm_l_1_idx]; 
+    int spm_k_1_idx = tile_start_coord.y + nonzero_idx; 
+    ValueT spm_k_1 = spm_k_ptr[spm_k_1_idx]; 
 
-                    TensorT sub = selector_j - selector_i;
-                    ValueT norm = sub.l2Norm();
-                    TensorT truediv = sub / norm;
-                    ValueT sub_1 = norm - spm_l;
-                    ValueT mul = spm_k * sub_1;
-                    TensorT mul_1 = mul * truediv;
-                    ValueT mul_2 = norm * spm_l_1;
-                    ValueT mul_3 = spm_k_1 * mul_2;
-                    TensorT mul_4 = mul_3 * truediv;
-#pragma unroll
-                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
-                        s_tile_value_reducer_i[nonzero_idx + i * TILE_ITEMS] = mul_1.values[i];
-#pragma unroll
-                    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++)
-                        s_tile_value_reducer_j[nonzero_idx + i * TILE_ITEMS] = mul_4.values[i];
+                        TensorT sub = selector_j - selector_i; 
+    ValueT norm = sub.l2Norm(); 
+    TensorT truediv = sub / norm; 
+    ValueT sub_1 = norm - spm_l; 
+    ValueT mul = spm_k * sub_1; 
+    TensorT mul_1 = mul * truediv; 
+    ValueT mul_2 = norm * spm_l_1; 
+    ValueT mul_3 = spm_k_1 * mul_2; 
+    TensorT mul_4 = mul_3 * truediv; 
+    #pragma unroll
+    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+      s_tile_value_reducer_i[nonzero_idx + i * TILE_ITEMS] = mul_1.values[i]; 
+    #pragma unroll
+    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+      s_tile_value_reducer_j[nonzero_idx + i * TILE_ITEMS] = mul_4.values[i]; 
+
                 }
             }
 
             CTA_SYNC();
             // reduce the intermeidate computations
             // [code generation]
-            reduce(
-                s_tile_value_reducer_i,        ///< [in, code gen] Shared memory array of non-zero values for the merge tile
-                s_tile_row_end_offsets,        ///< [in, code gen] Shared memory array of row end offsets for the merge tile
-                tile_start_coord,              ///< [in] Starting coordinate of the merge tile
-                tile_end_coord,                ///< [in] Ending coordinate of the merge tile
-                tile_num_rows,                 ///< [in] Number of rows in the merge tile
-                tile_num_nonzeros,             ///< [in] Number of non-zeros in the merge tile
-                spmv_params.output_y_reducer_i ///< [out] Output vector y
-            );
-            CTA_SYNC();
-            reduce(
-                s_tile_value_reducer_j,        ///< [in, code gen] Shared memory array of non-zero values for the merge tile
-                s_tile_row_end_offsets,        ///< [in, code gen] Shared memory array of row end offsets for the merge tile
-                tile_start_coord,              ///< [in] Starting coordinate of the merge tile
-                tile_end_coord,                ///< [in] Ending coordinate of the merge tile
-                tile_num_rows,                 ///< [in] Number of rows in the merge tile
-                tile_num_nonzeros,             ///< [in] Number of non-zeros in the merge tile
-                spmv_params.output_y_reducer_j ///< [out] Output vector y
-            );
-            CTA_SYNC();
+               reduce( 
+                s_tile_value_reducer_i,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
+                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
+                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
+                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
+                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
+                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
+                spmv_params.output_y_reducer_i_ptr                  ///< [out] Output vector y 
+            ); 
+   CTA_SYNC(); 
+   reduce( 
+                s_tile_value_reducer_j,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
+                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
+                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
+                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
+                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
+                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
+                spmv_params.output_y_reducer_j_ptr                  ///< [out] Output vector y 
+            ); 
+   CTA_SYNC(); 
+
         }
+
+
 
         /**
          * Process a merge tile
@@ -527,7 +536,7 @@ namespace merged
         __device__ __forceinline__ void ConsumeTile(
             CoordinateT *d_tile_coordinates, ///< [in] Pointer to the temporary array of tile starting coordinates
             // TensorT *d_tile_carry_pairs,     ///< [out] Pointer to the temporary array carry-out dot product row-ids, one per block
-            int num_merge_tiles ///< [in] Total number of merge tiles
+            int num_merge_tiles             ///< [in] Total number of merge tiles
         )
         {
             int tile_idx = (blockIdx.y * gridDim.x) + blockIdx.x;

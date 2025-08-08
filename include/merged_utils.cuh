@@ -147,8 +147,8 @@ struct FlexParams
   OffsetT *selector_j_ptr; 
   ValueT *spm_l_ptr; 
   ValueT *spm_k_ptr; 
-  ValueT *output_y_reducer_i; 
-  ValueT *output_y_reducer_j; 
+  ValueT *output_y_reducer_i_ptr; 
+  ValueT *output_y_reducer_j_ptr; 
 
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.

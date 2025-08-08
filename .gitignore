@@ -29,3 +29,5 @@ dist/
 *.fatbin
 *.ii
 *.i
+
+saved_data/

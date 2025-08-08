@@ -53,9 +53,53 @@
 
 using namespace std;
 
-std::random_device rd;
-std::mt19937 gen(rd());
-std::uniform_int_distribution<> dis(0, 1000000);
+#include <fstream>
+#include <sstream>
+#include <vector>
+
+// Function to load column indices from file
+bool LoadIndicesFromFile(const std::string& filename, std::vector<int>& column_indices_i, std::vector<int>& column_indices_j) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        printf("Error: Could not open file %s\n", filename.c_str());
+        return false;
+    }
+    
+    std::string line;
+    bool reading_i = false;
+    bool reading_j = false;
+    
+    while (std::getline(file, line)) {
+        if (line.find("# Column indices i") != std::string::npos) {
+            reading_i = true;
+            reading_j = false;
+            continue;
+        } else if (line.find("# Column indices j") != std::string::npos) {
+            reading_i = false;
+            reading_j = true;
+            continue;
+        } else if (line.find("#") != std::string::npos) {
+            reading_i = false;
+            reading_j = false;
+            continue;
+        }
+        
+        if (reading_i || reading_j) {
+            std::istringstream iss(line);
+            int value;
+            while (iss >> value) {
+                if (reading_i) {
+                    column_indices_i.push_back(value);
+                } else if (reading_j) {
+                    column_indices_j.push_back(value);
+                }
+            }
+        }
+    }
+    
+    file.close();
+    return true;
+}
 
 /******************************************************************************
  * Graph stats
@@ -679,6 +723,9 @@ struct CsrMatrix
         num_cols        = coo_matrix.num_cols;
         num_nonzeros    = coo_matrix.num_nonzeros;
 
+        std::mt19937 gen(49);
+        std::uniform_int_distribution<> dis(0, num_nonzeros - 1);
+
         // Sort by rows, then columns
         if (verbose) printf("Ordering..."); fflush(stdout);
         std::stable_sort(coo_matrix.coo_tuples, coo_matrix.coo_tuples + num_nonzeros, CooComparator());
@@ -733,9 +780,11 @@ struct CsrMatrix
             prev_row = current_row;
 
             column_indices_i[current_nz]    = coo_matrix.coo_tuples[current_nz].col;
+            
             do {
                 column_indices_j[current_nz] = dis(gen) % num_cols; // random number between 0 and num_cols
             } while (column_indices_j[current_nz] == column_indices_i[current_nz]); // ensure i and j are different
+        
             column_indices_k[current_nz]    = current_nz;
             column_indices_l[current_nz]    = current_nz;
             values[current_nz]            = coo_matrix.coo_tuples[current_nz].val;
@@ -746,6 +795,60 @@ struct CsrMatrix
         {
             row_offsets[row] = num_nonzeros;
         }
+
+    // Load column_indices_i and column_indices_j from saved_data/indices.txt
+    {
+        FILE* idx_fp = fopen("saved_data/indices.txt", "r");
+        if (idx_fp) {
+            char line[1024];
+            // Skip the first line (matrix dimensions)
+            if (fgets(line, sizeof(line), idx_fp) == NULL) {
+                fclose(idx_fp);
+                goto indices_fallback;
+            }
+            // Find "# Column indices i"
+            while (fgets(line, sizeof(line), idx_fp)) {
+                if (strstr(line, "# Column indices i")) break;
+            }
+            if (feof(idx_fp)) {
+                fclose(idx_fp);
+                goto indices_fallback;
+            }
+            // Read column_indices_i
+            for (OffsetT i = 0; i < num_nonzeros; ++i) {
+                int val;
+                if (fscanf(idx_fp, "%d", &val) != 1) {
+                    fclose(idx_fp);
+                    goto indices_fallback;
+                }
+                column_indices_i[i] = static_cast<OffsetT>(val);
+            }
+            // Find "# Column indices j"
+            while (fgets(line, sizeof(line), idx_fp)) {
+                if (strstr(line, "# Column indices j")) break;
+            }
+            if (feof(idx_fp)) {
+                fclose(idx_fp);
+                goto indices_fallback;
+            }
+            // Read column_indices_j
+            for (OffsetT i = 0; i < num_nonzeros; ++i) {
+                int val;
+                if (fscanf(idx_fp, "%d", &val) != 1) {
+                    fclose(idx_fp);
+                    goto indices_fallback;
+                }
+                column_indices_j[i] = static_cast<OffsetT>(val);
+            }
+            fclose(idx_fp);
+        } else {
+indices_fallback:
+            // If file not found or error, keep the original random assignment
+            // (already done above)
+            ;
+        }
+    }
+
     }
 
 

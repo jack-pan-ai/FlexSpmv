@@ -6,9 +6,9 @@ import string
 
 import easier as esr
 from easier.core.jit import EasierTracer
+import scipy.sparse
+from scipy.io import mmwrite
 
-# Import our extension
-import flex_spmv
 
 # Part 1: Define spring-mass system model
 class SpringMassSystem(esr.Module):
@@ -44,7 +44,6 @@ class SpringMassSystem(esr.Module):
         f_i2 = self.reducer_j(f_ij2) # (M, 2)
 
         return f_i1, f_i2
-        # return f_i2
 
 class SpringMassSystem_calculation():
     def __init__(self, spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows):
@@ -72,6 +71,8 @@ class SpringMassSystem_calculation():
         f_ij2 = self.spm_k * (norm_r_ij * self.spm_l) * e_ij # (N, 2)
         f_i1 = torch.zeros(self.num_rows, 2, device="cuda", dtype=f_ij1.dtype)
         f_i2 = torch.zeros(self.num_rows, 2, device="cuda", dtype=f_ij2.dtype)
+
+        print(f_ij2)
         # reduce f_ij to f_i based on row_end_offset
         for i in range(self.num_rows):
             f_i1[i] = torch.sum(f_ij1[self.row_end_offset[i]:self.row_end_offset[i+1]], dim=0)
@@ -155,7 +156,7 @@ def generate_cuda_code_from_graph(traced_model, info_nodes):
                 target_name = 'reducer'
                 inputs.append(
                     {
-                        "name": "output_y_" + node.target,
+                        "name": "output_y_" + node.target + "_ptr",
                         "target": node.target,
                         "dtype": "ValueT"
                     }
@@ -290,7 +291,7 @@ def generate_cuda_code_from_graph(traced_model, info_nodes):
         else:
             # vector value and spm nnz
             if 'reducer' in str(inp['target']):
-                input_declarations_utils_code.append(f"  ValueT *{"output_y_" + inp['target']}; \n")
+                input_declarations_utils_code.append(f"  ValueT *{"output_y_" + inp['target'] + "_ptr"}; \n")
             else:
                 input_declarations_utils_code.append(f"  ValueT *{inp['target'] + '_ptr'}; \n")
                 input_declarations_code.append(f"  VectorValueIteratorT {inp['target'] + '_ptr'}; \n")
@@ -379,7 +380,7 @@ def generate_cuda_code_from_graph(traced_model, info_nodes):
         reducer_code.append(f"                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile \n")
         reducer_code.append(f"                tile_num_rows,                  ///< [in] Number of rows in the merge tile \n")
         reducer_code.append(f"                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile \n")
-        reducer_code.append(f"                spmv_params.output_y_{op['output']}                  ///< [out] Output vector y \n")
+        reducer_code.append(f"                spmv_params.output_y_{op['output']}_ptr                  ///< [out] Output vector y \n")
         reducer_code.append(f"            ); \n")
         reducer_code.append(f"   CTA_SYNC(); \n")
     
@@ -443,13 +444,129 @@ def generate_cuda_code_from_graph(traced_model, info_nodes):
     print("CUDA code generated successfully!")
     #  -------------------------------------------------------------
 
+def save_to_coo_format(spm_k, spm_l, row_end_offset, col_indices_i, col_indices_j, vector_x, output_dir="saved_data"):
+    """
+    Save the sparse matrix and vectors in COO Matrix Market format.
+    
+    Args:
+        spm_k: Spring constant values (N, 1)
+        spm_l: Spring length values (N, 1)
+        row_end_offset: Row end offsets (M + 1)
+        col_indices_i: Column indices for i (N)
+        col_indices_j: Column indices for j (N)
+        vector_x: Position vectors (N, D)
+        output_dir: Directory to save the files
+    """
+    import os
+    import numpy as np
+    from scipy import sparse
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Convert to CPU and numpy arrays
+    spm_k_np = spm_k.cpu().numpy()
+    spm_l_np = spm_l.cpu().numpy()
+    row_end_offset_np = row_end_offset.cpu().numpy()
+    col_indices_i_np = col_indices_i.cpu().numpy()
+    col_indices_j_np = col_indices_j.cpu().numpy()
+    vector_x_np = vector_x.cpu().numpy()
+    
+    # Generate row indices from row_end_offset
+    num_rows = len(row_end_offset_np) - 1
+    num_cols = vector_x_np.shape[0]
+    num_nnz = len(col_indices_i_np)
+    row_indices = np.zeros(num_nnz, dtype=np.int32)
+
+    for i in range(num_rows):
+        start = row_end_offset_np[i]
+        end = row_end_offset_np[i+1]
+        row_indices[start:end] = i
+    
+    # Create COO matrices
+    # 1. Matrix for spring constants (spm_k)
+    coo_k = sparse.coo_matrix((spm_k_np.flatten(), (row_indices, col_indices_i_np)), 
+                             shape=(num_rows, num_cols))
+    # print(coo_k)
+    # print(col_indices_i_np)
+    # Sort the COO matrix coo_k by column index
+    # Get the permutation that sorts the column indices
+    # sort_perm = np.argsort(coo_k.col, kind='stable')
+    # coo_k = sparse.coo_matrix(
+    #     (coo_k.data[sort_perm], (coo_k.row[sort_perm], coo_k.col[sort_perm])),
+    #     shape=coo_k.shape
+    # )
+
+    # 2. Matrix for spring lengths (spm_l)
+    coo_l = sparse.coo_matrix((spm_l_np.flatten(), (row_indices, col_indices_i_np)), 
+                             shape=(num_rows, num_cols))
+    
+    # Sort the COO matrix coo_l by column index
+    # sort_perm = np.argsort(coo_l.col, kind='stable')
+    # coo_l = sparse.coo_matrix(
+    #     (coo_l.data[sort_perm], (coo_l.row[sort_perm], coo_l.col[sort_perm])),
+    #     shape=coo_l.shape
+    # )
+    
+    # Custom function to write Matrix Market files with decimal format
+    def write_mtx_file(filename, coo_matrix, comment=""):
+        with open(filename, 'w') as f:
+            # Write header
+            f.write("%%MatrixMarket matrix coordinate real general\n")
+            if comment:
+                f.write(f"%{comment}\n")
+            
+            # Write dimensions and number of non-zeros
+            f.write(f"{coo_matrix.shape[0]} {coo_matrix.shape[1]} {coo_matrix.nnz}\n")
+            
+            # Write data in coordinate format (1-indexed for Matrix Market)
+            for i, j, v in zip(coo_matrix.row, coo_matrix.col, coo_matrix.data):
+                # Use 1-indexed format for Matrix Market and format value as decimal
+                f.write(f"{i+1} {j+1} {v:.6f}\n")
+    
+    # Save the matrices in Matrix Market format with decimal values
+    write_mtx_file(os.path.join(output_dir, "spm_k_matrix.mtx"), coo_k, comment="Spring constant matrix (k)")
+    write_mtx_file(os.path.join(output_dir, "spm_l_matrix.mtx"), coo_l, comment="Spring length matrix (l)")
+    
+    # Save vectors in a simple format that can be read in C++
+    # For vector_x, save as a text file with shape information in the header
+    with open(os.path.join(output_dir, "vector_x.txt"), 'w') as f:
+        f.write(f"{vector_x_np.shape[0]} {vector_x_np.shape[1]}\n")  # Header: rows cols
+        for i in range(vector_x_np.shape[0]):
+            for j in range(vector_x_np.shape[1]):
+                f.write(f"{vector_x_np[i, j]:.6f} ")
+            f.write("\n")
+    # Also save row indices, col_indices_i, and col_indices_j in a format readable by C++
+    with open(os.path.join(output_dir, "indices.txt"), 'w') as f:
+        f.write(f"{num_rows} {num_cols} {num_nnz}\n")  # Header: num_rows num_cols num_nnz
+        f.write("# Row indices\n")
+        for i in range(num_nnz):
+            f.write(f"{row_indices[i]} ")
+        f.write("\n# Column indices i\n")
+        for i in range(num_nnz):
+            f.write(f"{col_indices_i_np[i]} ")
+        f.write("\n# Column indices j\n")
+        for i in range(num_nnz):
+            f.write(f"{col_indices_j_np[i]} ")
+        f.write("\n# Row end offsets\n")
+        for i in range(num_rows + 1):
+            f.write(f"{row_end_offset_np[i]} ")
+    
+    print(f"Data saved successfully to {output_dir}/")
+    print(f"Files saved:")
+    print(f"  - {output_dir}/spm_k_matrix.mtx (Matrix Market format)")
+    print(f"  - {output_dir}/spm_l_matrix.mtx (Matrix Market format)")
+    print(f"  - {output_dir}/vector_x.txt (Text format)")
+    print(f"  - {output_dir}/indices.txt (Text format with row/column indices)")
+
 # Main function to run the entire pipeline
 def main():
 
+    torch.manual_seed(52)
     # data settings
-    num_nnz = 20
-    num_cols = 10
-    num_rows = 5
+    num_nnz = 20000
+    num_cols = 1000
+    num_rows = 170
     dim_x = 2
     spm_k = torch.rand(num_nnz, 1, device="cuda", dtype=torch.float32)  # (N, 1)
     # spm_l = torch.rand(num_nnz, 1, device="cuda", dtype=torch.float32)  # (N, 1)
@@ -457,21 +574,44 @@ def main():
     vector_x = torch.rand(num_cols, dim_x, device="cuda", dtype=torch.float32)  # (N, D)
     output_y_reducer_i = torch.zeros(num_rows, dim_x, device="cuda", dtype=torch.float32)  # (M, D)
     output_y_reducer_j = torch.zeros(num_rows, dim_x, device="cuda", dtype=torch.float32)  # (M, D)
-    row_end_offset = torch.sort(torch.randint(0, num_nnz + 1, (num_rows,), device="cuda", dtype=torch.int32))[0] # (M + 1)
+    row_end_offset = torch.sort(torch.randint(0, num_nnz + 1, (num_rows - 1, ), device="cuda", dtype=torch.int32))[0] 
     row_end_offset = torch.cat([torch.zeros(1, device="cuda", dtype=torch.int32), row_end_offset])
-    row_end_offset = row_end_offset
-    print(f"row_end_offset: {row_end_offset}")
+    row_end_offset = torch.cat([row_end_offset, torch.tensor([num_nnz], device="cuda", dtype=torch.int32)]) # (M + 1)
+    # print(f"row_end_offset: {row_end_offset}")
     # Ensure that i and j are different for each point
-    col_indices_i = torch.randint(0, num_cols, (num_nnz,), device="cuda", dtype=torch.int32)
+    # Generate col_indices_i and col_indices_j such that for each row, the number of nonzeros is determined by row_end_offset,
+    # and for each nonzero, col_indices_j != col_indices_i.
+    col_indices_i = torch.empty(num_nnz, dtype=torch.int32, device="cuda")
     col_indices_j = torch.empty(num_nnz, dtype=torch.int32, device="cuda")
-    for idx in range(num_nnz):
-        i_val = col_indices_i[idx].item()
-        # pick a random j != i
-        choices = torch.arange(num_cols, device="cuda")
-        choices = choices[choices != i_val]
-        j_val = choices[torch.randint(0, len(choices), (1,), device="cuda")].item()
-        col_indices_j[idx] = j_val
-
+    for row in range(num_rows):
+        start = row_end_offset[row].item()
+        end = row_end_offset[row + 1].item()
+        nnz_in_row = end - start
+        if nnz_in_row <= 0:
+            continue
+        # For each nonzero in this row, generate i and j
+        # i_vals must be sampled without replacement
+        if nnz_in_row > num_cols:
+            raise ValueError(f"Cannot assign {nnz_in_row} unique i indices in row {row} with only {num_cols} columns.")
+        # Sample i_vals without replacement
+        i_vals = torch.randperm(num_cols, device="cuda")[:nnz_in_row].tolist()
+        j_vals = []
+        for i_val in i_vals:
+            # pick a random j != i
+            choices = torch.arange(num_cols, device="cuda")
+            choices = choices[choices != i_val]
+            j_val = choices[torch.randint(0, len(choices), (1,), device="cuda")].item()
+            j_vals.append(j_val)
+        # Sort by i, then by j
+        sorted_pairs = sorted(zip(i_vals, j_vals), key=lambda x: (x[0], x[1]))
+        for local_idx, (i_val, j_val) in enumerate(sorted_pairs):
+            idx = start + local_idx
+            col_indices_i[idx] = i_val
+            col_indices_j[idx] = j_val
+    
+    # Save the sparse matrix and vectors in COO format
+    save_to_coo_format(spm_k, spm_l, row_end_offset, col_indices_i, col_indices_j, vector_x)
+    
     # pytorch model for code generation
     model = SpringMassSystem(
         spm_k, spm_l, vector_x, output_y_reducer_i, output_y_reducer_j, row_end_offset, col_indices_i, col_indices_j, num_rows
@@ -491,7 +631,14 @@ def main():
     print("\nStep 2: Generating CUDA code from the graph")
     generate_cuda_code_from_graph(traced_model, info_nodes)
 
-    # run the model
+    # check the results
+    # print(f"Results gold 1: {results_gold_1}")
+    # print(f"Results gold 2: {results_gold_2}")
+    results_gold_1 = results_gold_1.cpu()
+    results_gold_2 = results_gold_2.cpu()
+    
+# Import our extension
+    import flex_spmv
     comp_results_1, comp_results_2 = flex_spmv.flex_spmv(
         spm_k, spm_l, row_end_offset, 
         col_indices_i, col_indices_j, 
@@ -499,16 +646,12 @@ def main():
         output_y_reducer_i, 
         output_y_reducer_j)
 
-    # check the results
-    results_gold_1 = results_gold_1.cpu()
-    results_gold_2 = results_gold_2.cpu()
+
     comp_results_1 = comp_results_1.cpu()
     comp_results_2 = comp_results_2.cpu()
-    print(f"Results gold 1: {results_gold_1}")
-    print(f"Results flex_spmv 1: {comp_results_1}")
+    # print(f"Results flex_spmv 1: {comp_results_1}")
     print(f"Results difference 1: {torch.norm(results_gold_1 - comp_results_1)}")
-    print(f"Results gold 2: {results_gold_2}")
-    print(f"Results flex_spmv 2: {comp_results_2}")
+    # print(f"Results flex_spmv 2: {comp_results_2}")
     print(f"Results difference 2: {torch.norm(results_gold_2 - comp_results_2)}")
     if torch.norm(results_gold_1 - comp_results_1) < 1e-6 and torch.norm(results_gold_2 - comp_results_2) < 1e-6:
         print("Results are the same")

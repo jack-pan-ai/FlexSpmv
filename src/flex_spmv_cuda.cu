@@ -31,8 +31,8 @@ std::vector<torch::Tensor> launch_flex_spmv_cuda(
     params.selector_i_ptr = col_indices_i.data_ptr<OffsetT>();
     params.selector_j_ptr = col_indices_j.data_ptr<OffsetT>();
     params.vector_x_ptr = vector_x.data_ptr<ValueT>();
-    params.output_y_reducer_i = output_y_reducer_i.data_ptr<ValueT>();
-    params.output_y_reducer_j = output_y_reducer_j.data_ptr<ValueT>();
+    params.output_y_reducer_i_ptr = output_y_reducer_i.data_ptr<ValueT>();
+    params.output_y_reducer_j_ptr = output_y_reducer_j.data_ptr<ValueT>();
     params.num_rows = num_rows;
     params.num_cols = num_cols;
     params.num_nonzeros = num_nonzeros;

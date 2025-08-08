@@ -91,17 +91,16 @@ void SpmvGold(
 {
     for (OffsetT row = 0; row < a.num_rows; ++row)
     {
-        // ValueT partial = beta * vector_y_in[row];
+        // // ValueT partial = beta * vector_y_in[row];
+        // printf("a.row_offsets[row]: %d\n", a.row_offsets[row]);
         // printf("a.row_offsets[row + 1]: %d\n", a.row_offsets[row + 1]);
         ValueT partial[DIM_OUTPUT_VECTOR_Y] = {0.0f, 0.0f};
+        ValueT partial1[DIM_OUTPUT_VECTOR_Y] = {0.0f, 0.0f};
         for (
             OffsetT offset = a.row_offsets[row];
             offset < a.row_offsets[row + 1];
             ++offset)
         {
-            // partial += alpha * a.values[offset] * vector_x[a.column_indices[offset]];
-            // flex spmv
-            // partial += alpha * a.values[a.column_indices_A[offset]] * vector_x[a.column_indices[offset]];
             // spring mass
             // select
             ValueT ri[DIM_INPUT_VECTOR_X];
@@ -141,7 +140,10 @@ void SpmvGold(
             // map
             ValueT norm_rij = 0.0f;
             ValueT unit_rij[DIM_INPUT_VECTOR_X];
+            ValueT f_ij[DIM_INPUT_VECTOR_X];
+            ValueT f_ij1[DIM_INPUT_VECTOR_X];
             ValueT mass = 0.0f;
+            ValueT mass1 = 0.0f;
             for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
                 unit_rij[i] = ri[i] - rj[i];
             for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
@@ -152,14 +154,22 @@ void SpmvGold(
 
             mass = - (norm_rij - l_ij[0]) * k_ij[0];
             for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
-                unit_rij[i] = unit_rij[i] * mass;
+                f_ij[i] = unit_rij[i] * mass;
+            
+            mass1 = - (norm_rij * l_ij[0]) * k_ij[0];
+            for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
+                f_ij1[i] = unit_rij[i] * mass1;
 
             // reduce
             for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
-                partial[i] += unit_rij[i];
+                partial[i] += f_ij[i];
+            for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
+                partial1[i] += f_ij1[i];
         }
         for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
             vector_y_out[row * DIM_OUTPUT_VECTOR_Y + i] = partial[i];
+        for (int i = 0; i < DIM_OUTPUT_VECTOR_Y; ++i)
+            vector_y_out[row * DIM_OUTPUT_VECTOR_Y + i + a.num_rows * DIM_OUTPUT_VECTOR_Y] = partial1[i];
     }
 }
 
@@ -228,7 +238,7 @@ float TestGpuMergeCsrmv_from_scratch(
 
     if (!g_quiet)
     {
-        int compare = CompareDeviceResults(reference_vector_y_out, params.output_y_reducer_j, params.num_rows * DIM_OUTPUT_VECTOR_Y, true, g_verbose);
+        int compare = CompareDeviceResults(reference_vector_y_out, params.output_y_reducer_i_ptr, params.output_y_reducer_j_ptr, params.num_rows * DIM_OUTPUT_VECTOR_Y, true, g_verbose);
         printf("\t%s\n", compare ? "FAIL" : "PASS"); fflush(stdout);
     }
 
@@ -330,17 +340,86 @@ void RunTest(
     // Allocate input and output vectors
     ValueT* vector_x        = new ValueT[csr_matrix.num_cols * DIM_INPUT_VECTOR_X];
     ValueT* vector_y_in     = new ValueT[csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y];
-    ValueT* vector_y_out    = new ValueT[csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y];
+    ValueT* vector_y_out    = new ValueT[csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y * 2];
 
-    for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
-        // Initialize vector_x with seed
-        vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f; // random number between 0 and 1
+    std::mt19937 gen(49);
+    std::uniform_int_distribution<> dis(0, 99999);
+
+    // Read vector_x from file instead of generating it randomly
+    FILE* fp = fopen("saved_data/vector_x.txt", "r");
+    if (fp) {
+        int rows, cols;
+        if (fscanf(fp, "%d %d", &rows, &cols) == 2) {
+            if (rows * cols == csr_matrix.num_cols * DIM_INPUT_VECTOR_X) {
+                for (int i = 0; i < rows * cols; ++i) {
+                    double temp_val;
+                    if (fscanf(fp, "%lf", &temp_val) != 1) {
+                        printf("Error reading vector_x from file. Falling back to random generation.\n");
+                        // Fall back to random generation
+                        for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
+                            vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
+                        break;
+                    }
+                    vector_x[i] = static_cast<ValueT>(temp_val);
+                }
+                printf("Successfully loaded vector_x from saved_data/vector_x.txt\n");
+            } else {
+                printf("Dimension mismatch in vector_x.txt (%d x %d) vs expected (%d x %d). Falling back to random generation.\n", 
+                      rows, cols, csr_matrix.num_cols, DIM_INPUT_VECTOR_X);
+                for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
+                    vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
+            }
+        } else {
+            printf("Error reading dimensions from vector_x.txt. Falling back to random generation.\n");
+            for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
+                vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
+        }
+        fclose(fp);
+    } else {
+        printf("Could not open saved_data/vector_x.txt. Falling back to random generation.\n");
+        for (int col = 0; col < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++col)
+            vector_x[col] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
+    }
 
     for (int row = 0; row < csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y; ++row)
         vector_y_in[row] = 0.0f;
 
     // Compute reference answer
     SpmvGold(csr_matrix, vector_x, vector_y_in, vector_y_out, alpha, beta);
+
+    // // Print the column index i and j for each nonzero
+    // printf("Column indices i: ");
+    // for (int nz = 0; nz < csr_matrix.num_nonzeros; ++nz) {
+    //     printf("%d ", static_cast<int>(csr_matrix.column_indices_i[nz]));
+    // }
+    // printf("\n");
+    // printf("Column indices j: ");
+    // for (int nz = 0; nz < csr_matrix.num_nonzeros; ++nz) {
+    //     printf("%d ", static_cast<int>(csr_matrix.column_indices_j[nz]));
+    // }
+    // printf("\n");
+
+    // // Print vector_x
+    // printf("vector_x: ");
+    // for (int i = 0; i < csr_matrix.num_cols * DIM_INPUT_VECTOR_X; ++i) {
+    //     printf("%f ", static_cast<float>(vector_x[i]));
+    // }
+    // printf("\n");
+
+    // // Print the row end offsets
+    // printf("Row end offsets: ");
+    // for (int i = 0; i < csr_matrix.num_rows + 1; ++i) {
+    //     printf("%d ", static_cast<int>(csr_matrix.row_offsets[i]));
+    // }
+    // printf("\n");
+
+    // // print spm_k
+    // printf("spm_k: ");
+    // for (int i = 0; i < csr_matrix.num_nonzeros; ++i) {
+    //     printf("%f ", static_cast<float>(csr_matrix.values[i]));
+    // }
+    // printf("\n");
+    
 
     float avg_ms, setup_ms;
 
@@ -357,12 +436,12 @@ void RunTest(
 
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_k_ptr,          sizeof(ValueT) * csr_matrix.num_nonzeros));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_l_ptr,          sizeof(ValueT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets, sizeof(OffsetT) * (csr_matrix.num_rows + 1)));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_i_ptr, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_j_ptr, sizeof(OffsetT) * csr_matrix.num_nonzeros));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.vector_x_ptr,        sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_i,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_j,        sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_i_ptr,     sizeof(OffsetT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_j_ptr,     sizeof(OffsetT) * csr_matrix.num_nonzeros));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.vector_x_ptr,       sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_i_ptr,       sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_j_ptr,       sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets,  sizeof(OffsetT) * (csr_matrix.num_rows + 1)));
     params.num_rows         = csr_matrix.num_rows;
     params.num_cols         = csr_matrix.num_cols;
     params.num_nonzeros     = csr_matrix.num_nonzeros;
@@ -370,11 +449,10 @@ void RunTest(
     CubDebugExit(cudaMemcpy((void*) params.spm_k_ptr,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.spm_l_ptr,            (void*) csr_matrix.values,          sizeof(ValueT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
     CubDebugExit(cudaMemcpy((void*) params.d_row_end_offsets,   (void*) csr_matrix.row_offsets,     sizeof(OffsetT) * (csr_matrix.num_rows + 1), cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.selector_i_ptr,      (void*) csr_matrix.column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.selector_j_ptr,      (void*) csr_matrix.column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.vector_x_ptr,        (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.output_y_reducer_i,  (void*) vector_y_in,                   sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.output_y_reducer_j,  (void*) vector_y_in,                   sizeof(ValueT) * csr_matrix.num_rows * DIM_OUTPUT_VECTOR_Y, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.selector_i_ptr,       (void*) csr_matrix.column_indices_i, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.selector_j_ptr,       (void*) csr_matrix.column_indices_j, sizeof(OffsetT) * csr_matrix.num_nonzeros, cudaMemcpyHostToDevice));
+    CubDebugExit(cudaMemcpy((void*) params.vector_x_ptr,         (void*) vector_x,                   sizeof(ValueT) * csr_matrix.num_cols * DIM_INPUT_VECTOR_X, cudaMemcpyHostToDevice));
+
 
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
@@ -385,12 +463,12 @@ void RunTest(
     // Cleanup
     if (params.spm_k_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_k_ptr));
     if (params.spm_l_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_l_ptr));
-    if (params.d_row_end_offsets)   CubDebugExit(g_allocator.DeviceFree(params.d_row_end_offsets));
     if (params.selector_i_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_i_ptr));
     if (params.selector_j_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_j_ptr));
     if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
-    if (params.output_y_reducer_i)  CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_i));
-    if (params.output_y_reducer_j)  CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_j));
+    if (params.output_y_reducer_i_ptr)          CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_i_ptr));
+    if (params.output_y_reducer_j_ptr)          CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_j_ptr));
+    if (params.d_row_end_offsets)   CubDebugExit(g_allocator.DeviceFree(params.d_row_end_offsets));
 
     if (vector_x)                   delete[] vector_x;
     if (vector_y_in)                delete[] vector_y_in;

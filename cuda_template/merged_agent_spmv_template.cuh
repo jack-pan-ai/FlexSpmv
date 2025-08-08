@@ -418,7 +418,8 @@ namespace merged
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
             //shared memory reused is disabled 
-            OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            // OffsetT *s_tile_row_end_offsets = &temp_storage.aliasable.merge_items[0].row_end_offset;
+            __shared__ OffsetT s_tile_row_end_offsets[TILE_ITEMS];
 
 // Gather the row end-offsets for the merge tile into shared memory
 #pragma unroll 1
