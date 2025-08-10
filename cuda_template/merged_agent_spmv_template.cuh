@@ -119,7 +119,7 @@ namespace merged
 
         // BlockReduce specialization
         typedef BlockReduce<
-            ValueT,
+            TensorT,
             BLOCK_THREADS,
             BLOCK_REDUCE_WARP_REDUCTIONS>
             BlockReduceT;
@@ -435,6 +435,7 @@ namespace merged
 
             // [code generation]
             ${reducer_smem_definitions}
+            ${aggregator_reg_definitions}
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -455,6 +456,7 @@ namespace merged
             // reduce the intermeidate computations
             // [code generation]
             ${reducer_code}
+            ${aggregator_code}
         }
 
 

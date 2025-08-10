@@ -119,7 +119,7 @@ namespace merged
 
         // BlockReduce specialization
         typedef BlockReduce<
-            ValueT,
+            TensorT,
             BLOCK_THREADS,
             BLOCK_REDUCE_WARP_REDUCTIONS>
             BlockReduceT;
@@ -444,10 +444,11 @@ namespace merged
             CTA_SYNC();
 
             // [code generation]
-               // each reducer need SMEM to store the non-zero values 
-   __shared__ ValueT s_tile_value_reducer_i[TILE_ITEMS * DIM_INPUT_VECTOR_X]; 
-   // each reducer need SMEM to store the non-zero values 
-   __shared__ ValueT s_tile_value_reducer_j[TILE_ITEMS * DIM_INPUT_VECTOR_X]; 
+            
+               // each aggregator need a register to store the non-zero values 
+   TensorT aggregator_reg_sum_1; 
+   // each aggregator need a register to store the non-zero values 
+   TensorT aggregator_reg_sum_2; 
 
 
 // Select
@@ -492,12 +493,8 @@ namespace merged
     ValueT mul_2 = norm * spm_l_1; 
     ValueT mul_3 = spm_k_1 * mul_2; 
     TensorT mul_4 = mul_3 * truediv; 
-    #pragma unroll
-    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
-      s_tile_value_reducer_i[nonzero_idx + i * TILE_ITEMS] = mul_1.values[i]; 
-    #pragma unroll
-    for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
-      s_tile_value_reducer_j[nonzero_idx + i * TILE_ITEMS] = mul_4.values[i]; 
+    aggregator_reg_sum_1 = aggregator_reg_sum_1 + mul_1; 
+    aggregator_reg_sum_2 = aggregator_reg_sum_2 + mul_4; 
 
                 }
             }
@@ -505,26 +502,25 @@ namespace merged
             CTA_SYNC();
             // reduce the intermeidate computations
             // [code generation]
-               reduce( 
-                s_tile_value_reducer_i,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
-                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
-                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
-                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
-                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
-                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
-                spmv_params.output_y_reducer_i_ptr                  ///< [out] Output vector y 
-            ); 
-   CTA_SYNC(); 
-   reduce( 
-                s_tile_value_reducer_j,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
-                s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
-                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
-                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
-                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
-                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
-                spmv_params.output_y_reducer_j_ptr                  ///< [out] Output vector y 
-            ); 
-   CTA_SYNC(); 
+            
+               // Allocate shared memory for BlockReduceT 
+   __shared__ typename BlockReduceT::TempStorage temp_storage; 
+   // blockReduce 
+   TensorT sum_1 = BlockReduceT(temp_storage).Sum(aggregator_reg_sum_1); 
+   if (threadIdx.x == 0) 
+   { 
+     #pragma unroll
+     for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+      atomicAdd(spmv_params.output_y_sum_1_ptr + i, sum_1.values[i]); 
+     } 
+   // blockReduce 
+   TensorT sum_2 = BlockReduceT(temp_storage).Sum(aggregator_reg_sum_2); 
+   if (threadIdx.x == 0) 
+   { 
+     #pragma unroll
+     for (int i = 0; i < DIM_INPUT_VECTOR_X; i++) 
+      atomicAdd(spmv_params.output_y_sum_2_ptr + i, sum_2.values[i]); 
+     } 
 
         }
 

@@ -19,8 +19,13 @@ INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files and their corresponding executables
 
-FLEX_SOURCE := src/flex_spmv_gen.cu
-FLEX_EXEC := $(BIN_DIR)/flex_spmv_gen
+# (optional) used for testing reducers
+# FLEX_SOURCE := src/flex_spmv_reducer_test.cu
+# FLEX_EXEC := $(BIN_DIR)/flex_spmv_reducer_test
+
+# (optional) used for testing aggregators
+FLEX_SOURCE := src/flex_spmv_aggregator_test.cu
+FLEX_EXEC := $(BIN_DIR)/flex_spmv_aggregator_test
 
 # Header files that might be included
 HEADER_FILES := $(wildcard include/*.cuh) $(wildcard include/*.h) $(wildcard *.h)
