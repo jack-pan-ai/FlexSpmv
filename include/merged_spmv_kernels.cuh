@@ -106,10 +106,7 @@ namespace merged
         typename ValueT,      ///< Matrix and vector value type
         typename OffsetT,     ///< Signed integer type for sequence offsets
         typename CoordinateT, ///< Merge path coordinate type
-        typename TensorT,     ///< Tensor type
-        typename SpmvParamsT, ///< SpmvParams type
-        bool HAS_ALPHA,       ///< Whether the input parameter Alpha is 1
-        bool HAS_BETA>        ///< Whether the input parameter Beta is 0
+        typename SpmvParamsT> ///< SpmvParams type
     __launch_bounds__(int(SpmvPolicyT::BLOCK_THREADS))
         __global__ void SpmvKernel(
             SpmvParamsT spmv_params,         ///< [in] Flexible Spmv input parameter bundle
@@ -121,8 +118,7 @@ namespace merged
         typedef AgentFlexSpmv<
             SpmvPolicyT,
             ValueT,
-            OffsetT,
-            TensorT>
+            OffsetT>
             AgentFlexSpmvT;
 
         // Shared memory for AgentFlexSpmv

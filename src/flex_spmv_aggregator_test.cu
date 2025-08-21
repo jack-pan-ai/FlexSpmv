@@ -43,11 +43,6 @@
 
 using namespace cub;
 
-#define INIT_KERNEL_THREADS 128 // INFO: this is from cub config
-#define DIM_OUTPUT_VECTOR_Y 2            // Dimension of the output vector
-#define DIM_INPUT_VECTOR_X 2    // Dimension of the input vector x
-#define DIM_INPUT_MATRIX_A 1    // Dimension of the input matrix A
-
 
 #include <cusparse.h>
 
@@ -98,16 +93,16 @@ void SpmvGold(
         // select
         ValueT ri[DIM_INPUT_VECTOR_X];
         ValueT rj[DIM_INPUT_VECTOR_X];
-        ValueT k_ij[DIM_INPUT_MATRIX_A];
-        ValueT l_ij[DIM_INPUT_MATRIX_A];
+        ValueT k_ij[DIM_INPUT_spm_k];
+        ValueT l_ij[DIM_INPUT_spm_l];
         for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
             ri[i] = vector_x[a.column_indices_i[nnz] * DIM_INPUT_VECTOR_X + i];
         for (int i = 0; i < DIM_INPUT_VECTOR_X; ++i)
             rj[i] = vector_x[a.column_indices_j[nnz] * DIM_INPUT_VECTOR_X + i];
-        for (int i = 0; i < DIM_INPUT_MATRIX_A; ++i)
-            k_ij[i] = a.values[a.column_indices_k[nnz] * DIM_INPUT_MATRIX_A + i];
-        for (int i = 0; i < DIM_INPUT_MATRIX_A; ++i)
-            l_ij[i] = a.values[a.column_indices_l[nnz] * DIM_INPUT_MATRIX_A + i];
+        for (int i = 0; i < DIM_INPUT_spm_k; ++i)
+            k_ij[i] = a.values[a.column_indices_k[nnz] * DIM_INPUT_spm_k + i];
+        for (int i = 0; i < DIM_INPUT_spm_l; ++i)
+            l_ij[i] = a.values[a.column_indices_l[nnz] * DIM_INPUT_spm_l + i];
 
         
         // map

@@ -289,6 +289,16 @@ struct CommandLineArgs
     float                       device_giga_bandwidth;
     size_t                      device_free_physmem;
     size_t                      device_total_physmem;
+    long long                   nv;
+    long long                   ne;
+    long long                   num_rows;
+    long long                   num_cols;
+    std::vector<int>            nv_shape;
+    int                         nv_dim;
+    std::vector<int>            ne1_shape;
+    int                         ne1_dim;
+    std::vector<int>            ne2_shape;
+    int                         ne2_dim;
 
     /**
      * Constructor

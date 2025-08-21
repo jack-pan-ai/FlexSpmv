@@ -10,8 +10,8 @@ BIN_DIR := bin
 NVCC := $(CUDA_HOME)/bin/nvcc
 
 # Flags for NVCC
-NVCC_FLAGS := -O3 -std=c++17 -arch=sm_80 -lcudart -Werror all-warnings
-NVCC_FLAGS += -G -g # for debug
+NVCC_FLAGS := -O3 -std=c++17 -arch=sm_80 -lcudart -Werror all-warnings --extended-lambda
+# NVCC_FLAGS += -G -g # for debug
 
 # Paths to include directories
 INCLUDES := -I. -I.. -Iinclude
@@ -19,13 +19,17 @@ INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files and their corresponding executables
 
-# (optional) used for testing reducers
+# # (optional) used for testing reducers
 # FLEX_SOURCE := src/flex_spmv_reducer_test.cu
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_reducer_test
 
 # (optional) used for testing aggregators
-FLEX_SOURCE := src/flex_spmv_aggregator_test.cu
-FLEX_EXEC := $(BIN_DIR)/flex_spmv_aggregator_test
+# FLEX_SOURCE := src/flex_spmv_aggregator_test.cu
+# FLEX_EXEC := $(BIN_DIR)/flex_spmv_aggregator_test
+
+# (optional) used for testing full
+FLEX_SOURCE := src/flex_spmv_full.cu
+FLEX_EXEC := $(BIN_DIR)/flex_spmv_full
 
 # Header files that might be included
 HEADER_FILES := $(wildcard include/*.cuh) $(wildcard include/*.h) $(wildcard *.h)

@@ -1,117 +1,204 @@
 #pragma once
 
+#include <cstdio>
+
 #define INIT_KERNEL_THREADS 128 // INFO: this is from cub config
-#define DIM_OUTPUT_VECTOR_Y 2   // [code generation] Dimension of the output vector
-#define DIM_INPUT_VECTOR_X 2    // [code generation] Dimension of the input vector x
-#define DIM_INPUT_MATRIX_A 1    // Dimension of the input matrix A
 
 template <typename OffsetT, typename ValueT, int Dim>
-struct Tensor
+struct TensorKey
 {
     typedef ValueT Value;
     OffsetT key;
     ValueT values[Dim];
 
     // Constructor
-    __host__ __device__ Tensor()
+    __host__ __device__ __forceinline__ TensorKey()
     {
         #pragma unroll
         for (int i = 0; i < Dim; ++i)
             values[i] = 0.0f;
     }
 
-    // Constructor with key and values
-    __host__ __device__ Tensor(const OffsetT &k, const ValueT *v) : key(k)
+    // Constructor with values
+    __host__ __device__ __forceinline__ TensorKey(const ValueT *v)
     {
         #pragma unroll
         for (int i = 0; i < Dim; ++i)
             values[i] = v[i];
     }
 
-    // Element-wise operations: +, -, *, /, *scalar, +scalar
-    __host__ __device__ Tensor operator+(const Tensor &other) const
+    // Constructor with key and values
+    __host__ __device__ __forceinline__ TensorKey(const OffsetT &k, const ValueT *v) : key(k)
     {
-        Tensor result;
-        result.key = key;
         #pragma unroll
         for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] + other.values[i];
+            values[i] = v[i];
+    }
+
+    // Binary operators - optimized to avoid temporary variables
+    __host__ __device__ __forceinline__ TensorKey operator+(const TensorKey &other) const
+    {
+        TensorKey result = *this;
+        result += other;
         return result;
     }
 
-    __host__ __device__ Tensor operator-(const Tensor &other) const
+    __host__ __device__ __forceinline__ TensorKey operator-(const TensorKey &other) const
     {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] - other.values[i];
+        TensorKey result = *this;
+        result -= other;
         return result;
     }
 
-    __host__ __device__ Tensor operator*(const Tensor &other) const
+    __host__ __device__ __forceinline__ TensorKey operator*(const TensorKey &other) const
     {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] * other.values[i];
+        TensorKey result = *this;
+        result *= other;
         return result;
     }
 
-    __host__ __device__ Tensor operator/(const Tensor &other) const
+    __host__ __device__ __forceinline__ TensorKey operator/(const TensorKey &other) const
     {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = (other.values[i] != 0.0) ? (values[i] / other.values[i]) : 0.0;
+        TensorKey result = *this;
+        result /= other;
         return result;
     }
 
-    __host__ __device__ Tensor operator/(ValueT scalar) const
+    __host__ __device__ __forceinline__ TensorKey operator+(ValueT scalar) const
     {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] / scalar;
+        TensorKey result = *this;
+        result += scalar;
         return result;
     }
 
-    __host__ __device__ Tensor operator*(ValueT scalar) const
+    __host__ __device__ __forceinline__ TensorKey operator-(ValueT scalar) const
     {
-        Tensor result;
-        result.key = key;
-        #pragma unroll
-        for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] * scalar;
+        TensorKey result = *this;
+        result -= scalar;
         return result;
     }
 
-    __host__ __device__ Tensor operator+(ValueT scalar) const
+    __host__ __device__ __forceinline__ TensorKey operator*(ValueT scalar) const
     {
-        Tensor result;
-        result.key = key;
+        TensorKey result = *this;
+        result *= scalar;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey operator/(ValueT scalar) const
+    {
+        TensorKey result = *this;
+        result /= scalar;
+        return result;
+    }
+
+    // Compound assignment operators (more efficient, no temporaries)
+    __host__ __device__ __forceinline__ TensorKey& operator+=(const TensorKey &other)
+    {
         #pragma unroll
         for (int i = 0; i < Dim; ++i)
-            result.values[i] = values[i] + scalar;
-        return result;
+            values[i] += other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator-=(const TensorKey &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] -= other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator*=(const TensorKey &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] *= other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator/=(const TensorKey &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = (other.values[i] != 0.0) ? (values[i] / other.values[i]) : 0.0;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator+=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] += scalar;
+        return *this;
+    }
+
+    
+    // Constructor with iterator
+    template<typename IteratorT>
+    __host__ __device__ __forceinline__ TensorKey(IteratorT iter)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = static_cast<ValueT>(iter[i]);
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator-=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] -= scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator*=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] *= scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator/=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] /= scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey& operator=(const TensorKey& other)
+    {
+        key = other.key;
+        if (this != &other) {  // Self-assignment check
+            #pragma unroll
+            for (int i = 0; i < Dim; ++i)
+                values[i] = other.values[i];
+        }
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ TensorKey(const TensorKey& other)
+    {
+        key = other.key;
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = other.values[i];
     }
 
     // Indexing operator for value access
-    __host__ __device__ ValueT &operator[](int idx)
+    __host__ __device__ __forceinline__ ValueT &operator[](int idx)
     {
         return values[idx];
     }
 
-    __host__ __device__ const ValueT &operator[](int idx) const
+    __host__ __device__ __forceinline__ const ValueT &operator[](int idx) const
     {
         return values[idx];
     }
     
     // L2 norm (Euclidean norm)
-    __host__ __device__ ValueT l2Norm() const
+    __host__ __device__ __forceinline__ ValueT l2Norm() const
     {
         ValueT sum = 0.0;
         #pragma unroll
@@ -120,10 +207,256 @@ struct Tensor
         return sqrt(sum);
     }
 
+    // Function overloading: Set values from array
+    __host__ __device__ __forceinline__ void set(const ValueT* array)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = array[i];
+    }
+
+    __host__ __device__ __forceinline__ void set(const ValueT val)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = val;
+    }
+
     // Host-only print function
     __host__ void print() const
     {
         printf("Key: %d, Values: [", (int)key);
+        for (int i = 0; i < Dim; ++i)
+        {
+            printf("%.2f", values[i]);
+            if (i < Dim - 1)
+                printf(", ");
+        }
+        printf("]\n");
+    }
+};
+
+// Values-only Tensor
+template <typename ValueT, int Dim>
+struct Tensor
+{
+    typedef ValueT Value;
+    ValueT values[Dim];
+
+    // Constructor
+    __host__ __device__ __forceinline__ Tensor()
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = 0.0f;
+    }
+
+    // Constructor with values
+    __host__ __device__ __forceinline__ Tensor(const ValueT *v)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = v[i];
+    }
+
+    // Constructor with iterator
+    template<typename IteratorT>
+    __host__ __device__ __forceinline__ Tensor(IteratorT iter)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = static_cast<ValueT>(iter[i]);
+    }
+
+    // Compound assignment operators (more efficient, no temporaries)
+    __host__ __device__ __forceinline__ Tensor& operator+=(const Tensor &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] += other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator-=(const Tensor &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] -= other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator*=(const Tensor &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] *= other.values[i];
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator/=(const Tensor &other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = (other.values[i] != 0.0) ? (values[i] / other.values[i]) : 0.0;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator+=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] += scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator-=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] -= scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator*=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] *= scalar;
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ Tensor& operator/=(ValueT scalar)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] /= scalar;
+        return *this;
+    }
+
+    // Binary operators - optimized to avoid temporary variables
+    __host__ __device__ __forceinline__ Tensor operator+(const Tensor &other) const
+    {
+        Tensor result = *this;
+        result += other;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator-(const Tensor &other) const
+    {
+        Tensor result = *this;
+        result -= other;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator*(const Tensor &other) const
+    {
+        Tensor result = *this;
+        result *= other;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator/(const Tensor &other) const
+    {
+        Tensor result = *this;
+        result /= other;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator+(ValueT scalar) const
+    {
+        Tensor result = *this;
+        result += scalar;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator-(ValueT scalar) const
+    {
+        Tensor result = *this;
+        result -= scalar;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator*(ValueT scalar) const
+    {
+        Tensor result = *this;
+        result *= scalar;
+        return result;
+    }
+
+    __host__ __device__ __forceinline__ Tensor operator/(ValueT scalar) const
+    {
+        Tensor result = *this;
+        result /= scalar;
+        return result;
+    }
+
+    // Indexing operator for value access
+    __host__ __device__ __forceinline__ ValueT &operator[](int idx)
+    {
+        return values[idx];
+    }
+
+    __host__ __device__ __forceinline__ const ValueT &operator[](int idx) const
+    {
+        return values[idx];
+    }
+
+    // L2 norm (Euclidean norm)
+    __host__ __device__ __forceinline__ ValueT l2Norm() const
+    {
+        ValueT sum = 0.0;
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            sum += values[i] * values[i];
+        return sqrt(sum);
+    }
+
+    // Add this to the Tensor struct after the constructors
+    __host__ __device__ __forceinline__ Tensor& operator=(const Tensor& other)
+    {
+        if (this != &other) {  // Self-assignment check
+            #pragma unroll
+            for (int i = 0; i < Dim; ++i)
+                values[i] = other.values[i];
+        }
+        return *this;
+    }
+
+    __host__ __device__ __forceinline__ void set(const ValueT* array)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = array[i];
+    }
+
+    __host__ __device__ __forceinline__ void set(const ValueT val)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = val;
+    }
+
+    // Also add copy constructor
+    __host__ __device__ __forceinline__ Tensor(const Tensor& other)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = other.values[i];
+    }
+
+    // Assignment from a scalar (e.g., 0), e.g. Tensor a; a = 0.0;
+    __host__ __device__ __forceinline__ Tensor& operator=(const ValueT val)
+    {
+        #pragma unroll
+        for (int i = 0; i < Dim; ++i)
+            values[i] = val;
+        return *this;
+    }
+
+    // Host-only print function
+    __host__ void print() const
+    {
+        printf("Values: [");
         for (int i = 0; i < Dim; ++i)
         {
             printf("%.2f", values[i]);
@@ -141,7 +474,6 @@ template <
 struct FlexParams
 {
     // [code generation]
-    OffsetT *d_row_end_offsets;  ///< Pointer to the array of \p m offsets demarcating the end of every row in \p d_column_indices and \p d_values
     ${input_declarations_utils_code}
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
@@ -163,16 +495,58 @@ struct LaunchKernelConfig
     }
 };
 
-// Non-member operator to enable scalar * Tensor
+// Non-member operator to enable scalar * TensorKey
 template <typename OffsetT, typename ValueT, int Dim>
-__host__ __device__ Tensor<OffsetT, ValueT, Dim> operator*(ValueT scalar, const Tensor<OffsetT, ValueT, Dim>& tensor)
+__host__ __device__ __forceinline__ TensorKey<OffsetT, ValueT, Dim> operator*(ValueT scalar, const TensorKey<OffsetT, ValueT, Dim>& tensor)
+{
+    return tensor * scalar;  // Reuse the existing TensorKey * scalar operator
+}
+
+// Non-member operator to enable scalar / TensorKey
+template <typename OffsetT, typename ValueT, int Dim>
+__host__ __device__ __forceinline__ TensorKey<OffsetT, ValueT, Dim> operator/(ValueT scalar, const TensorKey<OffsetT, ValueT, Dim>& tensor)
+{
+    TensorKey<OffsetT, ValueT, Dim> result;
+    result.key = tensor.key;
+    #pragma unroll
+    for (int i = 0; i < Dim; ++i)
+        result.values[i] = (tensor.values[i] != 0.0) ? (scalar / tensor.values[i]) : 0.0;
+    return result;
+}
+
+// Non-member operator to enable scalar * Tensor (values-only)
+template <typename ValueT, int Dim>
+__host__ __device__ __forceinline__ Tensor<ValueT, Dim> operator*(ValueT scalar, const Tensor<ValueT, Dim>& tensor)
 {
     return tensor * scalar;  // Reuse the existing Tensor * scalar operator
 }
 
-// Non-member operator to enable scalar / Tensor
-template <typename OffsetT, typename ValueT, int Dim>
-__host__ __device__ Tensor<OffsetT, ValueT, Dim> operator/(ValueT scalar, const Tensor<OffsetT, ValueT, Dim>& tensor)
+// Non-member operator to enable scalar / Tensor (values-only)
+template <typename ValueT, int Dim>
+__host__ __device__ __forceinline__ Tensor<ValueT, Dim> operator/(ValueT scalar, const Tensor<ValueT, Dim>& tensor)
 {
-    return tensor / scalar;
+    Tensor<ValueT, Dim> result;
+    #pragma unroll
+    for (int i = 0; i < Dim; ++i)
+        result.values[i] = (tensor.values[i] != 0.0) ? (scalar / tensor.values[i]) : 0.0;
+    return result;
 }
+
+// Macro to define tensor binary operators with broadcasting
+#define DEFINE_TENSOR_BINARY_OP(op_symbol) \
+template <typename ValueT, int N, int M> \
+__device__ __host__ __forceinline__ Tensor<ValueT, (N > M ? N : M)> operator op_symbol(const Tensor<ValueT, N>& a, const Tensor<ValueT, M>& b) \
+{ \
+    constexpr int OUT_DIM = (N > M ? N : M); \
+    Tensor<ValueT, OUT_DIM> result; \
+    _Pragma("unroll") \
+    for (int i = 0; i < OUT_DIM; ++i) \
+        result[i] = a[i % N] op_symbol b[i % M]; \
+    return result; \
+}
+
+// Define all binary operators
+DEFINE_TENSOR_BINARY_OP(+)
+DEFINE_TENSOR_BINARY_OP(-)
+DEFINE_TENSOR_BINARY_OP(*)
+DEFINE_TENSOR_BINARY_OP(/)
