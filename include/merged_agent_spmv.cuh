@@ -109,13 +109,6 @@ namespace merged
             OffsetT>
             VectorValueIteratorT;
 
-        // // BlockReduce specialization
-        // typedef BlockReduce<
-        //     TensorT,
-        //     BLOCK_THREADS,
-        //     BLOCK_REDUCE_WARP_REDUCTIONS>
-        //     BlockReduceT;
-
         // Smem for intermediate results and scan
         template <int DIM_REDUCER, typename BlockScanT>
         union SmemReuseReducer
@@ -163,11 +156,10 @@ namespace merged
         {
             // tile coordinates for blocks
             CoordinateT tile_coords[2];
-            // row end offsets for the tile
-            OffsetT s_tile_row_end_offsets[TILE_ITEMS];
             // smem for intermediate results and scan
                            SmemReuseReducer<2, BlockScan_reducer_1_T> smem_reducer_1; 
                SmemReuseReducer<6, BlockScan_reducer_2_T> smem_reducer_2; 
+    OffsetT s_tile_row_end_offsets[TILE_ITEMS]; 
 
         };
 
@@ -183,6 +175,7 @@ namespace merged
         _TempStorage &temp_storage; /// Reference to temp_storage
 
         FlexParams<ValueT, OffsetT> &spmv_params;
+        RowOffsetsIteratorT wd_row_end_offsets;
 
         // [code generation] wrapper pointers for loading the data
           VectorValueIteratorT vector_x_ptr; 
@@ -190,7 +183,6 @@ namespace merged
   ColumnIndicesIteratorT selector_2_ptr; 
   VectorValueIteratorT spm_1_ptr; 
   VectorValueIteratorT spm_2_ptr; 
-  RowOffsetsIteratorT wd_row_end_offsets; 
 
 
         //---------------------------------------------------------------------
@@ -205,12 +197,12 @@ namespace merged
             TempStorage &temp_storage,                ///< Reference to temp_storage
             FlexParams<ValueT, OffsetT> &spmv_params) ///< SpMV input parameter bundle
             : temp_storage(temp_storage.Alias()),
+                wd_row_end_offsets(spmv_params.d_row_end_offsets),
                   vector_x_ptr(spmv_params.vector_x_ptr), 
     selector_1_ptr(spmv_params.selector_1_ptr), 
     selector_2_ptr(spmv_params.selector_2_ptr), 
     spm_1_ptr(spmv_params.spm_1_ptr), 
     spm_2_ptr(spmv_params.spm_2_ptr), 
-    wd_row_end_offsets(spmv_params.d_row_end_offsets), 
 
               spmv_params(spmv_params)
         {
@@ -401,6 +393,7 @@ namespace merged
 
                 loading_offsets(tile_num_rows, tile_start_coord); 
 
+            
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -483,6 +476,9 @@ namespace merged
             ); 
    CTA_SYNC(); 
 
+
+            // [code generation]
+            
         }
 
 
@@ -529,6 +525,7 @@ namespace merged
             CoordinateT tile_start_coord = temp_storage.tile_coords[0]; 
             CoordinateT tile_end_coord = temp_storage.tile_coords[1]; 
 
+            
 
             ConsumeTile(
                 tile_idx,

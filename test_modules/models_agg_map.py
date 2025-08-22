@@ -7,9 +7,9 @@ from codegenDevice.codegen import trace_model, generate_cuda_code_from_graph
 
 # Part 1: Define model
 class System(esr.Module):
-    def __init__(self, spm_1, spm_2, vector_x, col_indices_1, col_indices_2, row_end_offset,
+    def __init__(self, spm_1, spm_2, vector_x, col_indices_1, col_indices_2,
                         output_y_map_1, output_y_map_2, 
-                        output_y_reducer_1, output_y_reducer_2, num_rows):
+                        output_y_agg_1, output_y_agg_2, num_nnz):
         super().__init__()
 
         # Inputs
@@ -18,19 +18,16 @@ class System(esr.Module):
         self.vector_x = vector_x  # (N, 2)        
         self.col_indices_1 = col_indices_1 # (N, 1)
         self.col_indices_2 = col_indices_2 # (N, 1)
-        self.row_end_offset = row_end_offset # (M + 1)
         
         # Outputs
         self.output_y_map_1 = output_y_map_1  # (N, 2)
         self.output_y_map_2 = output_y_map_2  # (N, 6)
-        self.output_y_reducer_1 = output_y_reducer_1  # (M, 2)
-        self.output_y_reducer_2 = output_y_reducer_2  # (M, 6)
+        self.output_y_agg_1 = output_y_agg_1  # (2)
+        self.output_y_agg_2 = output_y_agg_2  # (6)
 
         # Selectors and reducers
         self.selector_1 = esr.Selector(self.col_indices_1)
         self.selector_2 = esr.Selector(self.col_indices_2)
-        self.reducer_1 = esr.Reducer(self.row_end_offset, num_rows)
-        self.reducer_2 = esr.Reducer(self.row_end_offset, num_rows)
 
     def forward(self):
         
@@ -40,16 +37,16 @@ class System(esr.Module):
         output_y_map_1 = r_1 + self.spm_1 # (N, 2)
         output_y_map_2 = r_2 + self.spm_2 # (N, 2, 3) (N, 6)
 
-        output_y_reducer_1 = self.reducer_1(output_y_map_1) # (M, 2)
-        output_y_reducer_2 = self.reducer_2(output_y_map_2) # (M, 2, 3) (M, 6)
+        output_y_agg_1 = esr.sum(output_y_map_1) # (2)
+        output_y_agg_2 = esr.sum(output_y_map_2) # (6)
         
 
-        return output_y_map_1, output_y_map_2, output_y_reducer_1, output_y_reducer_2
+        return output_y_map_1, output_y_map_2, output_y_agg_1, output_y_agg_2
 
 class System_calculation():
-    def __init__(self, spm_1, spm_2, vector_x, col_indices_1, col_indices_2, row_end_offset,
+    def __init__(self, spm_1, spm_2, vector_x, col_indices_1, col_indices_2,
                         output_y_map_1, output_y_map_2, 
-                        output_y_reducer_1, output_y_reducer_2, num_rows):
+                        output_y_agg_1, output_y_agg_2, num_nnz):
         super().__init__()
 
         # Inputs
@@ -58,13 +55,12 @@ class System_calculation():
         self.vector_x = vector_x  # (N, 2)
         self.col_indices_1 = col_indices_1 # (N, 1)
         self.col_indices_2 = col_indices_2 # (N, 1)
-        self.row_end_offset = row_end_offset # (M + 1)
         # Outputs
         self.output_y_map_1 = output_y_map_1  # (N, 2)
         self.output_y_map_2 = output_y_map_2  # (N, 2, 3) (N, 6)
-        self.output_y_reducer_1 = output_y_reducer_1  # (M, 2)
-        self.output_y_reducer_2 = output_y_reducer_2  # (M, 2, 3) (M, 6)
-        self.num_rows = num_rows
+        self.output_y_agg_1 = output_y_agg_1  # (2)
+        self.output_y_agg_2 = output_y_agg_2  # (6)
+        self.num_nnz = num_nnz
 
     def forward(self):
         # compute force
@@ -74,18 +70,11 @@ class System_calculation():
         self.output_y_map_1 = r_1 + self.spm_1 # (N, 2)
         self.output_y_map_2 = r_2 + self.spm_2 # (N, 2, 3) (N, 6)
 
-        for i in range(self.num_rows):
-            start = self.row_end_offset[i].item()
-            end = self.row_end_offset[i + 1].item()
-            partial_output_y_map_1 = 0.0
-            partial_output_y_map_2 = 0.0
-            for j in range(start, end):
-                partial_output_y_map_1 += self.output_y_map_1[j]
-                partial_output_y_map_2 += self.output_y_map_2[j]
-            self.output_y_reducer_1[i] = partial_output_y_map_1
-            self.output_y_reducer_2[i] = partial_output_y_map_2
+        for i in range(self.num_nnz):
+            self.output_y_agg_1 += self.output_y_map_1[i]
+            self.output_y_agg_2 += self.output_y_map_2[i]
 
-        return self.output_y_map_1, self.output_y_map_2, self.output_y_reducer_1, self.output_y_reducer_2
+        return self.output_y_map_1, self.output_y_map_2, self.output_y_agg_1, self.output_y_agg_2
 
 def system_test():
     
@@ -102,11 +91,8 @@ def system_test():
     vector_x = torch.rand(num_cols, dim_x, 1, device="cuda", dtype=torch.float32)  # (N, D)
     output_y_map_1 = torch.zeros(num_nnz, dim_output_map1, 1, device="cuda", dtype=torch.float32)  # (N, D)
     output_y_map_2 = torch.zeros(num_nnz, 2, 3, device="cuda", dtype=torch.float32)  # (N, D)
-    output_y_reducer_1 = torch.zeros(num_rows, dim_output_map1, 1, device="cuda", dtype=torch.float32)  # (M, D)
-    output_y_reducer_2 = torch.zeros(num_rows, 2, 3, device="cuda", dtype=torch.float32)  # (M, D)
-    row_end_offset = torch.sort(torch.randint(0, num_nnz + 1, (num_rows - 1, ), device="cuda", dtype=torch.int32))[0] 
-    row_end_offset = torch.cat([torch.zeros(1, device="cuda", dtype=torch.int32), row_end_offset])
-    row_end_offset = torch.cat([row_end_offset, torch.tensor([num_nnz], device="cuda", dtype=torch.int32)]) # (M + 1)
+    output_y_agg_1 = torch.zeros(dim_output_map1, 1, device="cuda", dtype=torch.float32)  # (M, D)
+    output_y_agg_2 = torch.zeros(2, 3, device="cuda", dtype=torch.float32)  # (M, D)
     # print(f"row_end_offset: {row_end_offset}")
     # Generate col_indices_1 and col_indices_2 randomly (can be the same or different)
     col_indices_1 = torch.randint(0, num_cols, (num_nnz,), dtype=torch.int32, device="cuda")
@@ -117,16 +103,16 @@ def system_test():
     
     # pytorch model for code generation
     model = System(
-        spm_1, spm_2, vector_x, col_indices_1, col_indices_2, row_end_offset,
+        spm_1, spm_2, vector_x, col_indices_1, col_indices_2,
         output_y_map_1, output_y_map_2, 
-        output_y_reducer_1, output_y_reducer_2, num_rows
+        output_y_agg_1, output_y_agg_2, num_nnz
     )
 
     # python model for verification
     model_calculation = System_calculation(
-        spm_1, spm_2, vector_x, col_indices_1, col_indices_2, row_end_offset,
+        spm_1, spm_2, vector_x, col_indices_1, col_indices_2,
         output_y_map_1, output_y_map_2, 
-        output_y_reducer_1, output_y_reducer_2, num_rows
+        output_y_agg_1, output_y_agg_2, num_nnz
     )
 
 
@@ -139,11 +125,15 @@ def system_test():
     print("\nStep 2: Generating CUDA code from the graph")
     generate_cuda_code_from_graph(traced_model)
 
-    # check the results
+    # # check the results
     # results_gold_1 = results_gold_1.cpu()
     # results_gold_2 = results_gold_2.cpu()
+    # results_gold_3 = results_gold_3.cpu()
+    # results_gold_4 = results_gold_4.cpu()
     # print(f"Results gold 1: {results_gold_1}")
     # print(f"Results gold 2: {results_gold_2}")
+    # print(f"Results gold 3: {results_gold_3}")
+    # print(f"Results gold 4: {results_gold_4}")
     
 # # Import our extension
 #     import flex_spmv

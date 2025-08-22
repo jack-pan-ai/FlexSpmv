@@ -109,13 +109,6 @@ namespace merged
             OffsetT>
             VectorValueIteratorT;
 
-        // // BlockReduce specialization
-        // typedef BlockReduce<
-        //     TensorT,
-        //     BLOCK_THREADS,
-        //     BLOCK_REDUCE_WARP_REDUCTIONS>
-        //     BlockReduceT;
-
         // Smem for intermediate results and scan
         template <int DIM_REDUCER, typename BlockScanT>
         union SmemReuseReducer
@@ -138,8 +131,6 @@ namespace merged
         {
             // tile coordinates for blocks
             CoordinateT tile_coords[2];
-            // row end offsets for the tile
-            OffsetT s_tile_row_end_offsets[TILE_ITEMS];
             // smem for intermediate results and scan
             ${output_agent_SMEM_code}
         };
@@ -156,6 +147,7 @@ namespace merged
         _TempStorage &temp_storage; /// Reference to temp_storage
 
         FlexParams<ValueT, OffsetT> &spmv_params;
+        RowOffsetsIteratorT wd_row_end_offsets;
 
         // [code generation] wrapper pointers for loading the data
         ${input_declarations_code}
@@ -172,6 +164,7 @@ namespace merged
             TempStorage &temp_storage,                ///< Reference to temp_storage
             FlexParams<ValueT, OffsetT> &spmv_params) ///< SpMV input parameter bundle
             : temp_storage(temp_storage.Alias()),
+                wd_row_end_offsets(spmv_params.d_row_end_offsets),
               ${input_init_code}
               spmv_params(spmv_params)
         {
@@ -361,6 +354,7 @@ namespace merged
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
             ${offset_inside_forloop_code}
+            ${aggregator_reg_definitions}
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -387,6 +381,9 @@ namespace merged
             // [code generation]
             ${diagonal_code_spmv_agent_thread}
             ${reducer_code}
+
+            // [code generation]
+            ${aggregator_code}
         }
 
 
@@ -406,6 +403,7 @@ namespace merged
 
             // [code generation]
             ${reducer_diagonal_code_spmv_agent}
+            ${aggregator_code_dispatch}
 
             ConsumeTile(
                 tile_idx,

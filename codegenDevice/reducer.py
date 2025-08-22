@@ -8,7 +8,7 @@ def reducer_diagnal_code_gen():
     diagonal_code_spmv = []
     diagonal_code_spmv_agent = []
     diagonal_code_spmv_agent_thread = []
-
+    offset_code_spmv_agent_dispatch = []
 
     diagonal_code_spmv.append(f"    if (search_grid_size < sm_count) \n")
     diagonal_code_spmv.append(f"    {{ \n")
@@ -62,6 +62,7 @@ def reducer_diagnal_code_gen():
     diagonal_code_spmv_agent.append(f"            CoordinateT tile_start_coord = temp_storage.tile_coords[0]; \n")
     diagonal_code_spmv_agent.append(f"            CoordinateT tile_end_coord = temp_storage.tile_coords[1]; \n")
 
+    # thread code
     diagonal_code_spmv_agent_thread.append(f"    // reduce the intermeidate computations \n")
     diagonal_code_spmv_agent_thread.append(f"    // all reducers share the same row end offsets \n")
     diagonal_code_spmv_agent_thread.append(f"    // Search for the thread's starting coordinate within the merge tile \n")
@@ -73,4 +74,8 @@ def reducer_diagnal_code_gen():
     diagonal_code_spmv_agent_thread.append(f"        tile_num_nonzeros, \n")
     diagonal_code_spmv_agent_thread.append(f"        thread_start_coord); \n")
 
-    return diagonal_code_spmv, diagonal_code_spmv_agent, diagonal_code_spmv_agent_thread
+    # spmv offset code
+    offset_code_spmv_agent_dispatch.append(f"    // [INFO] the row_end_offsets is shifted by 1, \n")
+    offset_code_spmv_agent_dispatch.append(f"    spmv_params.d_row_end_offsets = spmv_params.d_row_end_offsets + 1; \n")
+
+    return diagonal_code_spmv, diagonal_code_spmv_agent, diagonal_code_spmv_agent_thread, offset_code_spmv_agent_dispatch

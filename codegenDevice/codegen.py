@@ -9,32 +9,9 @@ from easier.core.jit import EasierTracer
 import scipy.sparse
 from scipy.io import mmwrite
 
-from codegenGPU.reducer import reducer_diagnal_code_gen
-from codegenGPU.utils import get_dim_length
+from codegenDevice.reducer import reducer_diagnal_code_gen
+from codegenDevice.utils import get_dim_length
 
-# info_nodes = {
-#         "vector_x": {"shape": (2,)},
-#         "vector_x1": {"shape": (2,)},
-#         "sub": {"shape": (2,)},
-#         "norm": {"shape": (1,)},
-#         "truediv": {"shape": (2,)},
-#         "spm_l": {"shape": (1,)},
-#         "spm_k": {"shape": (1,)},
-#         "spm_l_1": {"shape": (1,)},
-#         "spm_k_1": {"shape": (1,)},
-#         "sub_1": {"shape": (1,)},
-#         "mul_1": {"shape": (2,)},
-#         "mul": {"shape": (1,)},
-#         "mul_2": {"shape": (1,)},
-#         "mul_3": {"shape": (1,)},
-#         "mul_4": {"shape": (2,)},
-#         "selector_i": {"shape": (2,)},
-#         "selector_j": {"shape": (2,)},
-#         "reducer_i": {"shape": (2,)},
-#         "reducer_j": {"shape": (2,)},
-#         "sum_1": {"shape": (2,)},
-#         "sum_2": {"shape": (2,)}
-#     }
     
 info_nodes = {
     "vector_x": {"shape": (2,)},
@@ -46,7 +23,9 @@ info_nodes = {
     "add": {"shape": (2,)},
     "add_1": {"shape": (6,)},
     "reducer_1": {"shape": (2,)},
-    "reducer_2": {"shape": (6,)}
+    "reducer_2": {"shape": (6,)},
+    "sum_1": {"shape": (2,)},
+    "sum_2": {"shape": (6,)}
 }
 
 # Part 1: Trace the model with torch.fx
@@ -232,7 +211,11 @@ def generate_cuda_code_from_graph(traced_model):
                 'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None],
                 'shape': info_nodes[node.name]['shape']
             })
-    
+    # debug print
+    # for op in reducer_operations:
+    #     print(f"Reducer operation: {op}")
+    # for op in aggregator_operations:
+    #     print(f"Aggregator operation: {op}")
     
 #  -------------------------------------------------------------
 #  Generate the CUDA code
@@ -273,7 +256,6 @@ def generate_cuda_code_from_graph(traced_model):
         _dim = get_dim_length(out['shape'])
         if 'reducer' in str(out['target']):
             # reducer outside the forloop
-            _dim = get_dim_length(out['shape'])
             output_agent_tenosrs_code.append(f"  // Tensor and TensorKey for reducers \n")
             output_agent_tenosrs_code.append(f"  typedef TensorKey<OffsetT, ValueT, {_dim}> TensorKeyOutput_{out['name']}_T; \n")
             output_agent_tenosrs_code.append(f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out['name']}_T; \n")
@@ -285,6 +267,16 @@ def generate_cuda_code_from_graph(traced_model):
             output_agent_tenosrs_code.append(f"            AgentSpmvPolicyT::SCAN_ALGORITHM> \n")
             output_agent_tenosrs_code.append(f"            BlockScan_{out['name']}_T; \n")
             output_agent_SMEM_code.append(f"               SmemReuseReducer<{_dim}, BlockScan_{out['name']}_T> smem_{out['name']}; \n")
+        elif 'sum' in str(out['target']):
+            _name = out['name']
+            output_agent_tenosrs_code.append(f"  // Tensor type and block reducefor output \n")
+            output_agent_tenosrs_code.append(f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{_name}_T; \n")
+            output_agent_tenosrs_code.append(f"  typedef BlockReduce< \n")
+            output_agent_tenosrs_code.append(f"            TensorOutput_{_name}_T, \n")
+            output_agent_tenosrs_code.append(f"            BLOCK_THREADS, \n")
+            output_agent_tenosrs_code.append(f"            BLOCK_REDUCE_WARP_REDUCTIONS> \n")
+            output_agent_tenosrs_code.append(f"            BlockReduce_{_name}_T; \n")
+            output_agent_SMEM_code.append(f"               typename BlockReduce_{_name}_T::TempStorage smem_{_name}; \n")
         else:
             # used for map output
             output_agent_tenosrs_code.append(f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out['name']}_T; \n")
@@ -297,10 +289,8 @@ def generate_cuda_code_from_graph(traced_model):
         
     # is there is reducer, the offset is needed
     if reducer_operations != []:
-        input_declarations_utils_code.append(f"  OffsetT *d_row_end_offsets; \n")
-        input_declarations_code.append(f"  RowOffsetsIteratorT wd_row_end_offsets; \n")
-        input_init_code.append(f"    wd_row_end_offsets(spmv_params.d_row_end_offsets), \n")
         offset_inside_forloop_code.append(f"    loading_offsets(tile_num_rows, tile_start_coord); \n")
+        output_agent_SMEM_code.append(f"    OffsetT s_tile_row_end_offsets[TILE_ITEMS]; \n")
         
     # debug print
     # for inp in input_declarations_utils_code:
@@ -355,6 +345,8 @@ def generate_cuda_code_from_graph(traced_model):
             map_code.append(f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
         elif _op == 'reducer':
             map_code.append(f"    temp_storage.smem_{_name}.s_tile_value_reducer[nonzero_idx] = {op['args'][0]}; \n")
+        elif _op == 'sum':
+            map_code.append(f"    {_name} = {_name} + {op['args'][0]}; \n")
         else:
             # error
             raise ValueError(f"Operation {op_name} not supported")
@@ -368,28 +360,32 @@ def generate_cuda_code_from_graph(traced_model):
     #  Generate the aggregator code
     #  -------------------------------------------------------------
     aggregator_code = []
+    aggregator_code_dispatch = []
     aggregator_reg_definitions = []
     # the shared memory can be reused for multiple blockReduce
     if aggregator_operations != []:
-        aggregator_code.append(f"   // Allocate shared memory for BlockReduceT \n")
-        aggregator_code.append(f"   __shared__ typename BlockReduceT::TempStorage temp_storage; \n")
+        aggregator_code_dispatch.append(f"   // just padding parameters here \n")
+        aggregator_code_dispatch.append(f"   CoordinateT tile_start_coord = {{-1, tile_idx * TILE_ITEMS}}; \n")
+        aggregator_code_dispatch.append(f"   CoordinateT tile_end_coord = {{-1, min(tile_idx * TILE_ITEMS + TILE_ITEMS, spmv_params.num_nonzeros)}}; \n")
 
     for op in aggregator_operations:
+        _name = op['name']
+        _dim = get_dim_length(op['shape'])
         aggregator_reg_definitions.append(f"   // each aggregator need a register to store the non-zero values \n")
-        aggregator_reg_definitions.append(f"   TensorT aggregator_reg_{op['output']}; \n")
+        aggregator_reg_definitions.append(f"   TensorOutput_{_name}_T {_name}; \n")
         if op['op'] == 'sum':
             aggregator_code.append(f"   // blockReduce \n")
-            aggregator_code.append(f"   TensorT {op['output']} = BlockReduceT(temp_storage).Sum(aggregator_reg_{op['output']}); \n")
+            aggregator_code.append(f"   TensorOutput_{_name}_T {_name}_result = BlockReduce_{_name}_T(temp_storage.smem_{_name}).Sum({_name}); \n")
             aggregator_code.append(f"   if (threadIdx.x == 0) \n")
             aggregator_code.append(f"   {{ \n")
-            assert len(op['shape']) == 1, "Shape length is not 1, please reset the shape length"
-            if op['shape'][0] == 1:
-                aggregator_code.append(f"     atomic_add_to_gmem(spmv_params.output_y_{op['output']}_ptr, {op['output']}); \n")
-            else:
-                aggregator_code.append(f"     atomic_add_to_gmem(spmv_params.output_y_{op['output']}_ptr, {op['output']}, {op['shape'][0]}); \n")
+            aggregator_code.append(f"     #pragma unroll \n")
+            aggregator_code.append(f"     for (int i = 0; i < {_dim}; i++) \n")
+            aggregator_code.append(f"     {{ \n")
+            aggregator_code.append(f"       atomicAdd(&spmv_params.output_y_{_name}_ptr[i], {_name}_result.values[i]); \n")
             aggregator_code.append(f"     }} \n")
+            aggregator_code.append(f"   }} \n")
 
-    # debug print
+    # # debug print
     # for op in aggregator_reg_definitions:
     #     print(f"Aggregator reg definitions: {op}")
     # for op in aggregator_code:
@@ -402,7 +398,12 @@ def generate_cuda_code_from_graph(traced_model):
     
     # generate the diagnoal code once
     if reducer_operations != []:
-        reducer_diagonal_code_spmv, reducer_diagonal_code_spmv_agent, diagonal_code_spmv_agent_thread = reducer_diagnal_code_gen()
+        reducer_diagonal_code_spmv, reducer_diagonal_code_spmv_agent, diagonal_code_spmv_agent_thread, offset_code_spmv_agent_dispatch = reducer_diagnal_code_gen()
+    else:
+        reducer_diagonal_code_spmv = []
+        reducer_diagonal_code_spmv_agent = []
+        diagonal_code_spmv_agent_thread = []
+        offset_code_spmv_agent_dispatch = []
         
     # generate the reducer code for each reducer
     for op in reducer_operations:
@@ -426,6 +427,7 @@ def generate_cuda_code_from_graph(traced_model):
     # # debug print
     # for op in reducer_code:
     #     print(f"Reducer code: {op}")
+    
         
     #  -------------------------------------------------------------
     #  Create directories for generated code if they don't exist
@@ -447,21 +449,29 @@ def generate_cuda_code_from_graph(traced_model):
     #  -------------------------------------------------------------
     #  Apply templates using string.Template
     #  -------------------------------------------------------------
-    input_declarations_str = ''.join(input_declarations_code)
-    input_init_str = ''.join(input_init_code)
-    input_agent_tenosrs_code_str = ''.join(input_agent_tenosrs_code)
-    selector_str = ''.join(selector_code)
-    map_str = ''.join(map_code)
-    reducer_code_str = ''.join(reducer_code)
-    aggregator_reg_definitions_str = ''.join(aggregator_reg_definitions)
-    aggregator_code_str = ''.join(aggregator_code)
-    reducer_diagonal_code_spmv_str = ''.join(reducer_diagonal_code_spmv)
-    reducer_diagonal_code_spmv_agent_str = ''.join(reducer_diagonal_code_spmv_agent)
-    output_agent_tenosrs_code_str = ''.join(output_agent_tenosrs_code)
-    output_agent_SMEM_code_str = ''.join(output_agent_SMEM_code)
-    diagonal_code_spmv_agent_thread_str = ''.join(diagonal_code_spmv_agent_thread)
-    output_agent_forloop_code_str = ''.join(output_agent_forloop_code)
-    offset_inside_forloop_code_str = ''.join(offset_inside_forloop_code)
+    def trans_str(code):
+        if code == []:
+            return ''
+        else:
+            return ''.join(code)
+    
+    input_declarations_str = trans_str(input_declarations_code)
+    input_init_str = trans_str(input_init_code)
+    input_agent_tenosrs_code_str = trans_str(input_agent_tenosrs_code)
+    selector_str = trans_str(selector_code)
+    map_str = trans_str(map_code)
+    reducer_code_str = trans_str(reducer_code)
+    aggregator_reg_definitions_str = trans_str(aggregator_reg_definitions)
+    aggregator_code_str = trans_str(aggregator_code)
+    reducer_diagonal_code_spmv_str = trans_str(reducer_diagonal_code_spmv)
+    reducer_diagonal_code_spmv_agent_str = trans_str(reducer_diagonal_code_spmv_agent)
+    output_agent_tenosrs_code_str = trans_str(output_agent_tenosrs_code)
+    output_agent_SMEM_code_str = trans_str(output_agent_SMEM_code)
+    diagonal_code_spmv_agent_thread_str = trans_str(diagonal_code_spmv_agent_thread)
+    offset_code_spmv_agent_dispatch_str = trans_str(offset_code_spmv_agent_dispatch)
+    output_agent_forloop_code_str = trans_str(output_agent_forloop_code)
+    offset_inside_forloop_code_str = trans_str(offset_inside_forloop_code)
+    aggregator_code_dispatch_str = trans_str(aggregator_code_dispatch)
 
     agent_kernel_code = string.Template(kernel_agent_template).substitute(
         input_declarations_code=input_declarations_str,
@@ -477,11 +487,13 @@ def generate_cuda_code_from_graph(traced_model):
         output_agent_SMEM_code=output_agent_SMEM_code_str,
         diagonal_code_spmv_agent_thread=diagonal_code_spmv_agent_thread_str,
         output_agent_forloop_code=output_agent_forloop_code_str,
-        offset_inside_forloop_code=offset_inside_forloop_code_str
+        offset_inside_forloop_code=offset_inside_forloop_code_str,
+        aggregator_code_dispatch=aggregator_code_dispatch_str
     )
 
     spmv_kernel_code = string.Template(kernel_spmv_template).substitute(
-        reducer_diagonal_code_spmv=reducer_diagonal_code_spmv_str
+        reducer_diagonal_code_spmv=reducer_diagonal_code_spmv_str,
+        offset_code_spmv_agent_dispatch=offset_code_spmv_agent_dispatch_str
     )
 
     #  -------------------------------------------------------------

@@ -478,6 +478,7 @@ struct FlexParams
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
     int num_nonzeros;            ///< Number of nonzero elements of matrix <b>A</b>.
+    OffsetT *d_row_end_offsets;  ///< Row end offsets for the matrix <b>A</b>.
 };
 
 struct LaunchKernelConfig
