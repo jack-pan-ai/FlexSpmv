@@ -30,6 +30,4 @@ dist/
 *.ii
 *.i
 
-saved_data/
-
-include-true
+cpu/bin

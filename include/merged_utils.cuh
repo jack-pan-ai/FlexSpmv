@@ -481,8 +481,8 @@ struct FlexParams
   ValueT *spm_2_ptr; 
   ValueT *output_y_add_ptr; 
   ValueT *output_y_add_1_ptr; 
-  ValueT *output_y_reducer_1_ptr; 
-  ValueT *output_y_reducer_2_ptr; 
+  ValueT *output_y_sum_1_ptr; 
+  ValueT *output_y_sum_2_ptr; 
 
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.

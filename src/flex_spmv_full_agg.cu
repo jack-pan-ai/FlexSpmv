@@ -39,8 +39,6 @@
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
-#include "sparse_matrix.h"
-
 using namespace cub;
 
 
@@ -559,8 +557,9 @@ int main(int argc, char **argv)
             "[--v] "
             "[--i=<timing iterations>] "
             "[--fp32] "
-            "[--num_rows=<num_rows>] "
-            "[--num_cols=<num_cols>] "
+            "[--rows=<rows>] "
+            "[--cols=<cols>] "
+            "[--nnz=<nnz>] "
             "\n\t"
                 "--mtx=<matrix market file> "
             "\n", argv[0]);
@@ -589,9 +588,9 @@ int main(int argc, char **argv)
     fp32 = args.CheckCmdLineFlag("fp32");
     args.GetCmdLineArgument("i", timing_iterations);
     args.GetCmdLineArgument("mtx", mtx_filename);
-    args.GetCmdLineArgument("num_rows", args.num_rows);
-    args.GetCmdLineArgument("num_cols", args.num_cols);
-    args.GetCmdLineArgument("num_nnz", args.ne);
+    args.GetCmdLineArgument("rows", args.num_rows);
+    args.GetCmdLineArgument("cols", args.num_cols);
+    args.GetCmdLineArgument("nnz", args.ne);
     args.GetCmdLineArgument("nv", args.nv);
     args.GetCmdLineArgument("nv_dim", args.nv_dim);
     args.GetCmdLineArgument("ne1_dim", args.ne1_dim);

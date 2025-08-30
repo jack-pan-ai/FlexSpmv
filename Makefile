@@ -19,13 +19,13 @@ INCLUDES += -I$(CUDA_HOME)/include
 
 # Source files and their corresponding executables
 
-# (optional) used for testing full
-FLEX_SOURCE := src/flex_spmv_full.cu
-FLEX_EXEC := $(BIN_DIR)/flex_spmv_full
-
 # # (optional) used for testing full
-# FLEX_SOURCE := src/flex_spmv_full_agg.cu
-# FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_agg
+# FLEX_SOURCE := src/flex_spmv_full_red.cu
+# FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_red
+
+# (optional) used for testing full
+FLEX_SOURCE := src/flex_spmv_full_agg.cu
+FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_agg
 
 # Header files that might be included
 HEADER_FILES := $(wildcard include/*.cuh) $(wildcard include/*.h) $(wildcard *.h)

@@ -95,29 +95,7 @@ namespace merged
             int search_grid_size = cub::DivideAndRoundUp(num_merge_tiles + 1, search_block_size);
 
             // [generated code]
-                if (search_grid_size < sm_count) 
-    { 
-        d_tile_coordinates = NULL; 
-    } 
-    else 
-    { 
-        // Use separate search kernel if we have enough spmv tiles to saturate the device 
-        // Log spmv_search_kernel configuration 
-        if (debug_synchronous) 
-        { 
-            _CubLog("Invoking spmv_search_kernel<<<%d, %d, 0, %lld>>>()\n", 
-                    search_grid_size, search_block_size, (long long)stream); 
-        } 
-        // Invoke spmv_search_kernel 
-        spmv_search_kernel<<<search_grid_size, search_block_size, 0, stream>>>(num_merge_tiles, d_tile_coordinates, spmv_params); 
-        // Check for failure to launch 
-        if (CubDebug(error = cudaPeekAtLastError())) 
-            break; 
-        // Sync the stream if specified to flush runtime errors 
-        if (debug_synchronous && (CubDebug(error = cub::SyncStream(stream)))) 
-            break; 
-    } 
-
+            
 
             // Log spmv_kernel configuration
             if (debug_synchronous)
@@ -166,9 +144,7 @@ namespace merged
             using CoordinateT = typename cub::CubVector<OffsetT, 2>::Type;
             using SpmvParamsT = FlexParams<ValueT, OffsetT>;
 
-                // [INFO] the row_end_offsets is shifted by 1, 
-    spmv_params.d_row_end_offsets = spmv_params.d_row_end_offsets + 1; 
-
+            
 
             // fused fixup kernel with spmv
             error = merged_spmv_dispatch(spmv_params, d_temp_storage, temp_storage_bytes,

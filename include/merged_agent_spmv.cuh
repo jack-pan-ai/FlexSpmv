@@ -129,26 +129,20 @@ namespace merged
         // Tensor and TensorKey for reducers 
           typedef Tensor<ValueT, 2> TensorOutput_add_T; 
   typedef Tensor<ValueT, 6> TensorOutput_add_1_T; 
-  // Tensor and TensorKey for reducers 
-  typedef TensorKey<OffsetT, ValueT, 2> TensorKeyOutput_reducer_1_T; 
-  typedef Tensor<ValueT, 2> TensorOutput_reducer_1_T; 
-  // Reduce-value-by-segment scan operator 
-  typedef ReduceTensorByKeyOp<TensorKeyOutput_reducer_1_T> ReduceBySegmentOp_reducer_1_T; 
-  typedef BlockScan< 
-            TensorKeyOutput_reducer_1_T, 
+  // Tensor type and block reducefor output 
+  typedef Tensor<ValueT, 2> TensorOutput_sum_1_T; 
+  typedef BlockReduce< 
+            TensorOutput_sum_1_T, 
             BLOCK_THREADS, 
-            AgentSpmvPolicyT::SCAN_ALGORITHM> 
-            BlockScan_reducer_1_T; 
-  // Tensor and TensorKey for reducers 
-  typedef TensorKey<OffsetT, ValueT, 6> TensorKeyOutput_reducer_2_T; 
-  typedef Tensor<ValueT, 6> TensorOutput_reducer_2_T; 
-  // Reduce-value-by-segment scan operator 
-  typedef ReduceTensorByKeyOp<TensorKeyOutput_reducer_2_T> ReduceBySegmentOp_reducer_2_T; 
-  typedef BlockScan< 
-            TensorKeyOutput_reducer_2_T, 
+            BLOCK_REDUCE_WARP_REDUCTIONS> 
+            BlockReduce_sum_1_T; 
+  // Tensor type and block reducefor output 
+  typedef Tensor<ValueT, 6> TensorOutput_sum_2_T; 
+  typedef BlockReduce< 
+            TensorOutput_sum_2_T, 
             BLOCK_THREADS, 
-            AgentSpmvPolicyT::SCAN_ALGORITHM> 
-            BlockScan_reducer_2_T; 
+            BLOCK_REDUCE_WARP_REDUCTIONS> 
+            BlockReduce_sum_2_T; 
 
 
         /// Shared memory type required by this thread block
@@ -157,9 +151,8 @@ namespace merged
             // tile coordinates for blocks
             CoordinateT tile_coords[2];
             // smem for intermediate results and scan
-                           SmemReuseReducer<2, BlockScan_reducer_1_T> smem_reducer_1; 
-               SmemReuseReducer<6, BlockScan_reducer_2_T> smem_reducer_2; 
-    OffsetT s_tile_row_end_offsets[TILE_ITEMS]; 
+                           typename BlockReduce_sum_1_T::TempStorage smem_sum_1; 
+               typename BlockReduce_sum_2_T::TempStorage smem_sum_2; 
 
         };
 
@@ -391,9 +384,12 @@ namespace merged
             int tile_num_rows = tile_end_coord.x - tile_start_coord.x;
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
-                loading_offsets(tile_num_rows, tile_start_coord); 
-
             
+               // each aggregator need a register to store the non-zero values 
+   TensorOutput_sum_1_T sum_1; 
+   // each aggregator need a register to store the non-zero values 
+   TensorOutput_sum_2_T sum_2; 
+
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -418,8 +414,8 @@ namespace merged
                     // map
                         TensorOutput_add_T add = selector_1 + spm_1; 
     TensorOutput_add_1_T add_1 = selector_2 + spm_2; 
-    temp_storage.smem_reducer_1.s_tile_value_reducer[nonzero_idx] = add; 
-    temp_storage.smem_reducer_2.s_tile_value_reducer[nonzero_idx] = add_1; 
+    sum_1 = sum_1 + add; 
+    sum_2 = sum_2 + add_1; 
 
 
                     //output for map
@@ -440,45 +436,31 @@ namespace merged
             CTA_SYNC();
 
             // [code generation]
-                // reduce the intermeidate computations 
-    // all reducers share the same row end offsets 
-    // Search for the thread's starting coordinate within the merge tile 
-    CoordinateT thread_start_coord; 
-    search_thread_start_coord( 
-        temp_storage.s_tile_row_end_offsets, 
-        tile_start_coord, 
-        tile_num_rows, 
-        tile_num_nonzeros, 
-        thread_start_coord); 
-
-               reduce<2, BlockScan_reducer_1_T, TensorOutput_reducer_1_T, ReduceBySegmentOp_reducer_1_T>( 
-                temp_storage.smem_reducer_1.s_tile_value_reducer,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
-                temp_storage.s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
-                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
-                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
-                thread_start_coord,             ///< [in] Starting coordinate of the thread 
-                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
-                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
-                spmv_params.output_y_reducer_1_ptr,                  ///< [out] Output vector y 
-                temp_storage.smem_reducer_1.scan               ///< [in] Scan storage for BlockScanT 
-            ); 
-   CTA_SYNC(); 
-   reduce<6, BlockScan_reducer_2_T, TensorOutput_reducer_2_T, ReduceBySegmentOp_reducer_2_T>( 
-                temp_storage.smem_reducer_2.s_tile_value_reducer,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile 
-                temp_storage.s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile 
-                tile_start_coord,               ///< [in] Starting coordinate of the merge tile 
-                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile 
-                thread_start_coord,             ///< [in] Starting coordinate of the thread 
-                tile_num_rows,                  ///< [in] Number of rows in the merge tile 
-                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile 
-                spmv_params.output_y_reducer_2_ptr,                  ///< [out] Output vector y 
-                temp_storage.smem_reducer_2.scan               ///< [in] Scan storage for BlockScanT 
-            ); 
-   CTA_SYNC(); 
-
+            
+            
 
             // [code generation]
-            
+               // blockReduce 
+   TensorOutput_sum_1_T sum_1_result = BlockReduce_sum_1_T(temp_storage.smem_sum_1).Sum(sum_1); 
+   if (threadIdx.x == 0) 
+   { 
+     #pragma unroll 
+     for (int i = 0; i < 2; i++) 
+     { 
+       atomicAdd(&spmv_params.output_y_sum_1_ptr[i], sum_1_result.values[i]); 
+     } 
+   } 
+   // blockReduce 
+   TensorOutput_sum_2_T sum_2_result = BlockReduce_sum_2_T(temp_storage.smem_sum_2).Sum(sum_2); 
+   if (threadIdx.x == 0) 
+   { 
+     #pragma unroll 
+     for (int i = 0; i < 6; i++) 
+     { 
+       atomicAdd(&spmv_params.output_y_sum_2_ptr[i], sum_2_result.values[i]); 
+     } 
+   } 
+
         }
 
 
@@ -497,35 +479,11 @@ namespace merged
                 return;
 
             // [code generation]
-                      // Read our starting coordinates 
-          if (threadIdx.x < 2) 
-          { 
-            if (d_tile_coordinates == NULL) 
-            { 
-                  // Search our starting coordinates 
-                  OffsetT diagonal = (tile_idx + threadIdx.x) * TILE_ITEMS; 
-                  CoordinateT tile_coord; 
-                  CountingInputIterator<OffsetT> nonzero_indices(0); 
-                  // Search the merge path 
-                  MergePathSearch( 
-                      diagonal, 
-                      RowOffsetsSearchIteratorT(spmv_params.d_row_end_offsets), 
-                      nonzero_indices, 
-                      spmv_params.num_rows, 
-                      spmv_params.num_nonzeros, 
-                      tile_coord); 
-                  temp_storage.tile_coords[threadIdx.x] = tile_coord; 
-              } 
-              else 
-              { 
-                  temp_storage.tile_coords[threadIdx.x] = d_tile_coordinates[tile_idx + threadIdx.x]; 
-               } 
-            } 
-            CTA_SYNC(); 
-            CoordinateT tile_start_coord = temp_storage.tile_coords[0]; 
-            CoordinateT tile_end_coord = temp_storage.tile_coords[1]; 
-
             
+               // just padding parameters here 
+   CoordinateT tile_start_coord = {-1, tile_idx * TILE_ITEMS}; 
+   CoordinateT tile_end_coord = {-1, min(tile_idx * TILE_ITEMS + TILE_ITEMS, spmv_params.num_nonzeros)}; 
+
 
             ConsumeTile(
                 tile_idx,
