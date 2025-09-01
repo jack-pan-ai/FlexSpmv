@@ -12,13 +12,12 @@
 #include <vector>
 
 #include "merged_spmv.h"
-#include "utils.h"
 
-#define USE_REDUCERS 1
-#define USE_AGGREGATORS 0
+// #define USE_REDUCERS 1
+// #define USE_AGGREGATORS 0
 
-// #define USE_REDUCERS 0
-// #define USE_AGGREGATORS 1
+#define USE_REDUCERS 0
+#define USE_AGGREGATORS 1
 
 // --------------------------------------------------------------------
 // Reference CPU implementation Reducers
@@ -177,7 +176,7 @@ void GenerateRandomSystem(int seed, int num_rows, int num_cols, int nnz,
 // --------------------------------------------------------------------
 template <typename ValueT, typename OffsetT>
 bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
-                          bool verbose = false) {
+                          bool verbose = false, bool verbose2 = false) {
   std::vector<OffsetT> row_end_offsets;
   std::vector<OffsetT> selector_1;
   std::vector<OffsetT> selector_2;
@@ -250,73 +249,73 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
     return std::abs(a - b) <= eps;
   };
 
-  //   if (verbose)
-  //   {
-  //     // print out_map1_ref
-  //     std::cout << "map1_ref: ";
-  //     for (size_t i = 0; i < out_map1_ref.size(); ++i)
-  //       std::cout << out_map1_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_map1
-  //     std::cout << "map1: ";
-  //     for (size_t i = 0; i < out_map1.size(); ++i)
-  //       std::cout << out_map1[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_map2_ref
-  //     std::cout << "map2_ref: ";
-  //     for (size_t i = 0; i < out_map2_ref.size(); ++i)
-  //       std::cout << out_map2_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_map2
-  //     std::cout << "map2: ";
-  //     for (size_t i = 0; i < out_map2.size(); ++i)
-  //       std::cout << out_map2[i] << " ";
-  //     std::cout << std::endl;
-  // #if USE_REDUCERS
-  //     // print out_red1_ref
-  //     std::cout << "red1_ref: ";
-  //     for (size_t i = 0; i < out_red1_ref.size(); ++i)
-  //       std::cout << out_red1_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_red1
-  //     std::cout << "red1: ";
-  //     for (size_t i = 0; i < out_red1.size(); ++i)
-  //       std::cout << out_red1[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_red2_ref
-  //     std::cout << "red2_ref: ";
-  //     for (size_t i = 0; i < out_red2_ref.size(); ++i)
-  //       std::cout << out_red2_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_red2
-  //     std::cout << "red2: ";
-  //     for (size_t i = 0; i < out_red2.size(); ++i)
-  //       std::cout << out_red2[i] << " ";
-  //     std::cout << std::endl;
-  // #endif
-  // #if USE_AGGREGATORS
-  //     // print out_agg1_ref
-  //     std::cout << "agg1_ref: ";
-  //     for (size_t i = 0; i < out_agg1_ref.size(); ++i)
-  //       std::cout << out_agg1_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_agg1
-  //     std::cout << "agg1: ";
-  //     for (size_t i = 0; i < out_agg1.size(); ++i)
-  //       std::cout << out_agg1[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_agg2_ref
-  //     std::cout << "agg2_ref: ";
-  //     for (size_t i = 0; i < out_agg2_ref.size(); ++i)
-  //       std::cout << out_agg2_ref[i] << " ";
-  //     std::cout << std::endl;
-  //     // print out_agg2
-  //     std::cout << "agg2: ";
-  //     for (size_t i = 0; i < out_agg2.size(); ++i)
-  //       std::cout << out_agg2[i] << " ";
-  //     std::cout << std::endl;
-  // #endif
-  //   }
+    if (verbose2)
+    {
+      // print out_map1_ref
+      std::cout << "map1_ref: ";
+      for (size_t i = 0; i < out_map1_ref.size(); ++i)
+        std::cout << out_map1_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_map1
+      std::cout << "map1: ";
+      for (size_t i = 0; i < out_map1.size(); ++i)
+        std::cout << out_map1[i] << " ";
+      std::cout << std::endl;
+      // print out_map2_ref
+      std::cout << "map2_ref: ";
+      for (size_t i = 0; i < out_map2_ref.size(); ++i)
+        std::cout << out_map2_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_map2
+      std::cout << "map2: ";
+      for (size_t i = 0; i < out_map2.size(); ++i)
+        std::cout << out_map2[i] << " ";
+      std::cout << std::endl;
+  #if USE_REDUCERS
+      // print out_red1_ref
+      std::cout << "red1_ref: ";
+      for (size_t i = 0; i < out_red1_ref.size(); ++i)
+        std::cout << out_red1_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_red1
+      std::cout << "red1: ";
+      for (size_t i = 0; i < out_red1.size(); ++i)
+        std::cout << out_red1[i] << " ";
+      std::cout << std::endl;
+      // print out_red2_ref
+      std::cout << "red2_ref: ";
+      for (size_t i = 0; i < out_red2_ref.size(); ++i)
+        std::cout << out_red2_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_red2
+      std::cout << "red2: ";
+      for (size_t i = 0; i < out_red2.size(); ++i)
+        std::cout << out_red2[i] << " ";
+      std::cout << std::endl;
+  #endif
+  #if USE_AGGREGATORS
+      // print out_agg1_ref
+      std::cout << "agg1_ref: ";
+      for (size_t i = 0; i < out_agg1_ref.size(); ++i)
+        std::cout << out_agg1_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_agg1
+      std::cout << "agg1: ";
+      for (size_t i = 0; i < out_agg1.size(); ++i)
+        std::cout << out_agg1[i] << " ";
+      std::cout << std::endl;
+      // print out_agg2_ref
+      std::cout << "agg2_ref: ";
+      for (size_t i = 0; i < out_agg2_ref.size(); ++i)
+        std::cout << out_agg2_ref[i] << " ";
+      std::cout << std::endl;
+      // print out_agg2
+      std::cout << "agg2: ";
+      for (size_t i = 0; i < out_agg2.size(); ++i)
+        std::cout << out_agg2[i] << " ";
+      std::cout << std::endl;
+  #endif
+    }
 
   bool ok = true;
   for (size_t i = 0; i < out_map1.size(); ++i)
@@ -392,6 +391,7 @@ int main(int argc, char **argv) {
   int nnz = 20;
   int seed = 123;
   bool verbose = true;
+  bool verbose2 = false;
 
   // Parse command-line arguments
   for (int i = 1; i < argc; i++) {
@@ -418,6 +418,8 @@ int main(int argc, char **argv) {
       }
     } else if (arg == "--verbose" || arg == "-v") {
       verbose = true;
+    } else if (arg == "--verbose2" || arg == "-v2") {
+      verbose2 = true;
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: " << argv[0] << " [options]\n";
       std::cout << "Options:\n";
@@ -430,6 +432,7 @@ int main(int argc, char **argv) {
                    "(default: 32)\n";
       std::cout << "  --seed, -s NUM       Random seed (default: 123)\n";
       std::cout << "  --verbose, -v        Increase output verbosity\n";
+      std::cout << "  --verbose2, -v2        Increase output verbosity\n";
       std::cout << "  --help, -h           Show this help message\n";
       return 0;
     } else {
@@ -452,10 +455,10 @@ int main(int argc, char **argv) {
 
   if (use_double) {
     success = VerifyOmpMergeSystem<double, int>(seed, num_rows, num_cols, nnz,
-                                                verbose);
+                                                verbose, verbose2);
   } else {
     success = VerifyOmpMergeSystem<float, int>(seed, num_rows, num_cols, nnz,
-                                               verbose);
+                                               verbose, verbose2);
   }
 
   if (verbose) {

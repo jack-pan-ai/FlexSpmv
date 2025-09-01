@@ -133,6 +133,7 @@ namespace merged
             CoordinateT tile_coords[2];
             // smem for intermediate results and scan
             ${output_agent_SMEM_code}
+            OffsetT s_tile_row_end_offsets[TILE_ITEMS];
         };
 
         /// Temporary storage type (unionable)
@@ -353,8 +354,7 @@ namespace merged
             int tile_num_rows = tile_end_coord.x - tile_start_coord.x;
             int tile_num_nonzeros = tile_end_coord.y - tile_start_coord.y;
 
-            ${offset_inside_forloop_code}
-            ${aggregator_reg_definitions}
+            loading_offsets(tile_num_rows, tile_start_coord);
 
 // Select
 // Gather the nonzeros for the merge tile into shared memory
@@ -375,15 +375,20 @@ namespace merged
                     ${output_agent_forloop_code}
                 }
             }
-
             CTA_SYNC();
 
+            // reduce the intermeidate computations 
+            // all reducers share the same row end offsets 
+            // Search for the thread's starting coordinate within the merge tile 
+            CoordinateT thread_start_coord; 
+            search_thread_start_coord( 
+                temp_storage.s_tile_row_end_offsets, 
+                tile_start_coord, 
+                tile_num_rows, 
+                tile_num_nonzeros, 
+                thread_start_coord); 
             // [code generation]
-            ${diagonal_code_spmv_agent_thread}
             ${reducer_code}
-
-            // [code generation]
-            ${aggregator_code}
         }
 
 
@@ -400,10 +405,35 @@ namespace merged
 
             if (tile_idx >= num_merge_tiles)
                 return;
-
-            // [code generation]
-            ${reducer_diagonal_code_spmv_agent}
-            ${aggregator_code_dispatch}
+                
+            // Read our starting coordinates 
+            if (threadIdx.x < 2) 
+            { 
+                if (d_tile_coordinates == NULL) 
+                { 
+                    // Search our starting coordinates 
+                    OffsetT diagonal = (tile_idx + threadIdx.x) * TILE_ITEMS; 
+                    CoordinateT tile_coord; 
+                    CountingInputIterator<OffsetT> nonzero_indices(0); 
+    
+                    // Search the merge path 
+                    MergePathSearch( 
+                        diagonal, 
+                        RowOffsetsSearchIteratorT(spmv_params.d_row_end_offsets), 
+                        nonzero_indices, 
+                        spmv_params.num_rows, 
+                        spmv_params.num_nonzeros, 
+                        tile_coord); 
+                    temp_storage.tile_coords[threadIdx.x] = tile_coord; 
+                } 
+                else 
+                { 
+                    temp_storage.tile_coords[threadIdx.x] = d_tile_coordinates[tile_idx + threadIdx.x]; 
+                } 
+            } 
+            CTA_SYNC(); 
+            CoordinateT tile_start_coord = temp_storage.tile_coords[0]; 
+            CoordinateT tile_end_coord = temp_storage.tile_coords[1]; 
 
             ConsumeTile(
                 tile_idx,

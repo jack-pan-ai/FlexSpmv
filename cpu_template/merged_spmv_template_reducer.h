@@ -7,7 +7,7 @@
 #include <random>
 #include <vector>
 
-#include "utils.h"
+#include "DataStructShared.cuh"
 
 // Minimal CPU helpers
 template <typename OffsetT>
@@ -103,6 +103,7 @@ void ApplyCarryOutFixup(int num_threads,
 template <typename ValueT, typename OffsetT>
 void OmpMergeSystem(
     int num_threads,
+    OffsetT *__restrict row_end_offsets, 
     // [code generation]
     ${input_parameters_code} int num_rows, int num_nonzeros)
 {
@@ -110,7 +111,6 @@ void OmpMergeSystem(
   // input and output tensors types
   ${input_agent_tenosrs_code}
   ${output_agent_tenosrs_code}
-  ${aggregator_tenosrs_carry_out_code}
 
 #pragma omp parallel for schedule(static) num_threads(num_threads)
   for (int tid = 0; tid < num_threads; tid++)
@@ -123,14 +123,22 @@ void OmpMergeSystem(
     // Find starting and ending MergePath coordinates (row-idx, nonzero-idx) for
     // [code generation]
     // Merge list B (NZ indices)
-    ${reducer_diagonal_code_search}
-    ${aggregator_diagonal_code_search}
+    CountingInputIterator<OffsetT> nonzero_indices(0); 
+    int2 thread_coord; 
+    int2 thread_coord_end; 
+    int start_diagonal = std::min(items_per_thread * tid, num_merge_items); 
+    int end_diagonal = std::min(start_diagonal + items_per_thread, num_merge_items); 
+    MergePathSearch(start_diagonal, row_end_offsets, nonzero_indices, num_rows, 
+                    num_nonzeros, thread_coord); 
+    MergePathSearch(end_diagonal, row_end_offsets, nonzero_indices, num_rows, 
+                    num_nonzeros, thread_coord_end); 
 
     // Consume whole rows
-    ${forloop_code_reducers_consume_special_front}
+    for (; thread_coord.x < thread_coord_end.x; ++thread_coord.x) 
+    { 
 
       ${reducer_consume_init_code}
-      for (; thread_coord.y < ${forloop_code_row_end_offsets_tag};
+      for (; thread_coord.y < row_end_offsets[thread_coord.x];
            ++thread_coord.y)
       {
         // selector
@@ -142,32 +150,30 @@ void OmpMergeSystem(
         // output for reducer
         ${reducer_consume_forloop_code}
 
-        // output for aggregator
-        ${aggregator_partial_forloop_code}
-
         // output for map
-        ${output_agent_forloop_code_main}
+        ${output_agent_forloop_code}
       }
 
       // output for reducer
       ${reducer_consume_forloop_add_code}
-    ${forloop_code_reducers_consume_special_end}
+    }
 
     // Consume partial portion of thread's last row
     ${reducer_partial_init_code}
 
-    ${forloop_code_reducers_partial_special_front}
-      ${selector_code_last_row}
+    for (; thread_coord.y < thread_coord_end.y; ++thread_coord.y) 
+    { 
+      ${selector_code}
 
       // mapping
-      ${map_code_last_row}
+      ${map_code}
 
       // output for reducer
       ${reducer_partial_forloop_code}
 
       // output for map
-      ${output_agent_forloop_code_last_row}
-    ${forloop_code_reducers_partial_special_end}
+      ${output_agent_forloop_code}
+    }
 
     // Save carry-outs
     ${reducer_partial_carry_code}
@@ -175,7 +181,4 @@ void OmpMergeSystem(
 
   // Carry-out fix-up (rows spanning multiple threads)
   ${reducer_partial_carry_fixup_code}
-
-  // carry-out fix-up for aggregators
-  ${aggregator_partial_carry_fixup_code}
 }

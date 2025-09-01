@@ -7,7 +7,7 @@
 #include <random>
 #include <vector>
 
-#include "utils.h"
+#include "DataStructShared.cuh"
 
 // Minimal CPU helpers
 template <typename OffsetT>
@@ -104,32 +104,19 @@ template <typename ValueT, typename OffsetT>
 void OmpMergeSystem(
     int num_threads,
     // [code generation]
-      OffsetT *__restrict row_end_offsets, 
-  ValueT *__restrict vector_x_ptr, 
-  OffsetT *__restrict selector_1_ptr, 
-  OffsetT *__restrict selector_2_ptr, 
-  ValueT *__restrict spm_1_ptr, 
+      ValueT *__restrict spm_1_ptr, 
   ValueT *__restrict spm_2_ptr, 
   ValueT *__restrict output_y_add_ptr, 
   ValueT *__restrict output_y_add_1_ptr, 
-  ValueT *__restrict output_y_reducer_1_ptr, 
-  ValueT *__restrict output_y_reducer_2_ptr, 
  int num_rows, int num_nonzeros)
 {
   // [code generation]
   // input and output tensors types
-    typedef Tensor<ValueT, 2> TensorInput_vector_x_T; 
-  typedef Tensor<ValueT, 2> TensorInput_spm_1_T; 
+    typedef Tensor<ValueT, 2> TensorInput_spm_1_T; 
   typedef Tensor<ValueT, 6> TensorInput_spm_2_T; 
 
     typedef Tensor<ValueT, 2> TensorOutput_add_T; 
   typedef Tensor<ValueT, 6> TensorOutput_add_1_T; 
-  typedef Tensor<ValueT, 2> TensorOutput_reducer_1_T; 
- OffsetT row_carry_out_reducer_1[256]; 
- TensorOutput_reducer_1_T value_carry_out_reducer_1[256]; 
-  typedef Tensor<ValueT, 6> TensorOutput_reducer_2_T; 
- OffsetT row_carry_out_reducer_2[256]; 
- TensorOutput_reducer_2_T value_carry_out_reducer_2[256]; 
 
   
 
@@ -144,46 +131,25 @@ void OmpMergeSystem(
     // Find starting and ending MergePath coordinates (row-idx, nonzero-idx) for
     // [code generation]
     // Merge list B (NZ indices)
-        CountingInputIterator<OffsetT> nonzero_indices(0); 
     int2 thread_coord; 
     int2 thread_coord_end; 
-    int start_diagonal = std::min(items_per_thread * tid, num_merge_items); 
-    int end_diagonal = std::min(start_diagonal + items_per_thread, num_merge_items); 
-    MergePathSearch(start_diagonal, row_end_offsets, nonzero_indices, num_rows, 
-                    num_nonzeros, thread_coord); 
-    MergePathSearch(end_diagonal, row_end_offsets, nonzero_indices, num_rows, 
-                    num_nonzeros, thread_coord_end); 
-
-    
+    thread_coord.y = tid * items_per_thread; 
+    thread_coord_end.y = std::min(tid * items_per_thread + items_per_thread, num_nonzeros); 
 
     // Consume whole rows
-        for (; thread_coord.x < thread_coord_end.x; ++thread_coord.x) 
-    { 
 
-
-         TensorOutput_reducer_1_T reducer_reducer_1_running_total; 
-   TensorOutput_reducer_2_T reducer_reducer_2_running_total; 
-
-      for (; thread_coord.y <     row_end_offsets[thread_coord.x];
+      
+      for (; thread_coord.y < thread_coord_end.y;
            ++thread_coord.y)
       {
         // selector
-            OffsetT column_indices_vector_x = selector_1_ptr[thread_coord.y]; 
-    TensorInput_vector_x_T selector_1(vector_x_ptr + column_indices_vector_x * 2); 
-    OffsetT column_indices_vector_x_1 = selector_2_ptr[thread_coord.y]; 
-    TensorInput_vector_x_T selector_2(vector_x_ptr + column_indices_vector_x_1 * 2); 
-    TensorInput_spm_1_T spm_1(spm_1_ptr + thread_coord.y * 2); 
+            TensorInput_spm_1_T spm_1(spm_1_ptr + thread_coord.y * 2); 
     TensorInput_spm_2_T spm_2(spm_2_ptr + thread_coord.y * 6); 
 
 
         // mapping
-            TensorOutput_add_T add = selector_1 + spm_1; 
-    TensorOutput_add_1_T add_1 = selector_2 + spm_2; 
-
-
-        // output for reducer
-           reducer_reducer_1_running_total += add; 
-   reducer_reducer_2_running_total += add_1; 
+            TensorOutput_add_T add = spm_1 + spm_1; 
+    TensorOutput_add_1_T add_1 = spm_2 + spm_2; 
 
 
         // output for aggregator
@@ -200,74 +166,7 @@ void OmpMergeSystem(
   } 
 
       }
-
-      // output for reducer
-         for (int i = 0; i < 2; i++) 
-   { 
-     output_y_reducer_1_ptr[thread_coord.x * 2 + i] = reducer_reducer_1_running_total.values[i]; 
-   } 
-   for (int i = 0; i < 6; i++) 
-   { 
-     output_y_reducer_2_ptr[thread_coord.x * 6 + i] = reducer_reducer_2_running_total.values[i]; 
-   } 
-
-        } 
-
-
-    // Consume partial portion of thread's last row
-       TensorOutput_reducer_1_T reducer_1_running_total_partial; 
-   TensorOutput_reducer_2_T reducer_2_running_total_partial; 
-
-
-        for (; thread_coord.y < thread_coord_end.y; ++thread_coord.y) 
-    { 
-
-          OffsetT column_indices_vector_x = selector_1_ptr[thread_coord.y]; 
-    TensorInput_vector_x_T selector_1(vector_x_ptr + column_indices_vector_x * 2); 
-    OffsetT column_indices_vector_x_1 = selector_2_ptr[thread_coord.y]; 
-    TensorInput_vector_x_T selector_2(vector_x_ptr + column_indices_vector_x_1 * 2); 
-    TensorInput_spm_1_T spm_1(spm_1_ptr + thread_coord.y * 2); 
-    TensorInput_spm_2_T spm_2(spm_2_ptr + thread_coord.y * 6); 
-
-
-      // mapping
-          TensorOutput_add_T add = selector_1 + spm_1; 
-    TensorOutput_add_1_T add_1 = selector_2 + spm_2; 
-
-
-      // output for reducer
-         reducer_1_running_total_partial += add; 
-   reducer_2_running_total_partial += add_1; 
-
-
-      // output for map
-        for (int i = 0; i < 2; i++) 
-  { 
-    output_y_add_ptr[thread_coord.y * 2 + i] = add.values[i]; 
-  } 
-  for (int i = 0; i < 6; i++) 
-  { 
-    output_y_add_1_ptr[thread_coord.y * 6 + i] = add_1.values[i]; 
-  } 
-
-        } 
-
-
-    // Save carry-outs
-       row_carry_out_reducer_1[tid] = thread_coord_end.x; 
-   value_carry_out_reducer_1[tid] = reducer_1_running_total_partial; 
-   row_carry_out_reducer_2[tid] = thread_coord_end.x; 
-   value_carry_out_reducer_2[tid] = reducer_2_running_total_partial; 
-
   }
-
-  // Carry-out fix-up (rows spanning multiple threads)
-     ApplyCarryOutFixup<ValueT, OffsetT, 2>( 
-     num_threads, num_rows, row_carry_out_reducer_1, value_carry_out_reducer_1, output_y_reducer_1_ptr); 
-   ApplyCarryOutFixup<ValueT, OffsetT, 6>( 
-     num_threads, num_rows, row_carry_out_reducer_2, value_carry_out_reducer_2, output_y_reducer_2_ptr); 
-
-
   // carry-out fix-up for aggregators
   
 }

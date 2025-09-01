@@ -1,7 +1,6 @@
 import string
 
 from codegenHost.utils import get_dim_length
-from codegenHost.reducer import reducer_diagnal_code_gen
 
 # debug print
 def debug_print(code, code_name):
@@ -18,15 +17,11 @@ def declarations_gen(inputs, outputs, selector_register, reducer_operations, agg
     input_parameters_code = []
     input_agent_tenosrs_code = []
     output_agent_tenosrs_code = []
-    output_agent_forloop_code_main = []
-    output_agent_forloop_code_last_row = []
+    output_agent_forloop_code = []
     _tensor_names = set()
     
     
-    # is there is reducer, the offset is needed
-    if reducer_operations != []:
-        input_parameters_code.append(f"  OffsetT *__restrict row_end_offsets, \n")    
-    
+
     for inp in inputs:
         if inp['dtype'] == 'int':
             # column indices
@@ -61,18 +56,10 @@ def declarations_gen(inputs, outputs, selector_register, reducer_operations, agg
             # output_agent_tenosrs_code.append(f"  TensorOutput_{_name}_T value_carry_out_{_name}; \n")
             
             # map consume the main part
-            output_agent_forloop_code_main.append(f"  for (int i = 0; i < {_dim}; i++) \n")
-            output_agent_forloop_code_main.append(f"  {{ \n")
-            output_agent_forloop_code_main.append(f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {_name}.values[i]; \n")
-            output_agent_forloop_code_main.append(f"  }} \n")
-            
-            # map consume the last row
-            if reducer_operations != []:
-                # as the reducer exists, the last row is need to be consumed
-                output_agent_forloop_code_last_row.append(f"  for (int i = 0; i < {_dim}; i++) \n")
-                output_agent_forloop_code_last_row.append(f"  {{ \n")
-                output_agent_forloop_code_last_row.append(f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {_name}.values[i]; \n")
-                output_agent_forloop_code_last_row.append(f"  }} \n")
+            output_agent_forloop_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            output_agent_forloop_code.append(f"  {{ \n")
+            output_agent_forloop_code.append(f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {_name}.values[i]; \n")
+            output_agent_forloop_code.append(f"  }} \n")
     
     #  -------------------------------------------------------------
     #  Generate the selector register code
@@ -92,7 +79,7 @@ def declarations_gen(inputs, outputs, selector_register, reducer_operations, agg
             # spm loading
             selector_code.append(f"    TensorInput_{_target}_T {_selector_name}({_target + '_ptr'} + thread_coord.y * {_dim}); \n")
 
-    return input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, output_agent_forloop_code_main, output_agent_forloop_code_last_row, selector_code
+    return input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, output_agent_forloop_code, selector_code
 
 
 #  -------------------------------------------------------------
@@ -163,17 +150,6 @@ def reducer_gen(reducer_operations):
     reducer_partial_carry_code = []
     reducer_partial_carry_fixup_code = []
 
-    # generate the diagnoal code once
-    if reducer_operations != []:
-        reducer_diagonal_code_search, forloop_code_reducers_consume_special_front, forloop_code_reducers_consume_special_end, forloop_code_reducers_partial_special_front, forloop_code_reducers_partial_special_end = reducer_diagnal_code_gen()
-    else:
-        reducer_diagonal_code_search = []
-        forloop_code_reducers_consume_special_front = []
-        forloop_code_reducers_consume_special_end = []
-        forloop_code_reducers_partial_special_front = []
-        forloop_code_reducers_partial_special_end = []
-
-
     # generate the reducer code for each reducer
     for op in reducer_operations:
         # get the dimension length of the shape
@@ -194,5 +170,5 @@ def reducer_gen(reducer_operations):
         reducer_partial_carry_fixup_code.append(f"   ApplyCarryOutFixup<ValueT, OffsetT, {_dim}>( \n")
         reducer_partial_carry_fixup_code.append(f"     num_threads, num_rows, row_carry_out_{_name}, value_carry_out_{_name}, output_y_{_name}_ptr); \n")
 
-    return reducer_consume_init_code, reducer_consume_forloop_code, reducer_consume_forloop_add_code, reducer_partial_init_code, reducer_partial_forloop_code, reducer_partial_carry_code, reducer_partial_carry_fixup_code, reducer_diagonal_code_search, forloop_code_reducers_consume_special_front, forloop_code_reducers_consume_special_end, forloop_code_reducers_partial_special_front, forloop_code_reducers_partial_special_end
+    return reducer_consume_init_code, reducer_consume_forloop_code, reducer_consume_forloop_add_code, reducer_partial_init_code, reducer_partial_forloop_code, reducer_partial_carry_code, reducer_partial_carry_fixup_code
 

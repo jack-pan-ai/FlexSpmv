@@ -9,7 +9,6 @@ from easier.core.jit import EasierTracer
 import scipy.sparse
 from scipy.io import mmwrite
 
-from codegenDevice.reducer import reducer_diagnal_code_gen
 from codegenDevice.utils import get_dim_length
 from traceGraph.graph_trace import trace_graph
 
@@ -46,7 +45,6 @@ def generate_cuda_code_from_graph(traced_model):
     output_agent_tenosrs_code = []
     output_agent_SMEM_code = []
     output_agent_forloop_code = []
-    offset_inside_forloop_code = []
     _tensor_names = set()
     for inp in inputs:
         if inp['dtype'] == 'int':
@@ -101,11 +99,6 @@ def generate_cuda_code_from_graph(traced_model):
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(f"    spmv_params.output_y_{out['name']}_ptr[(tile_start_coord.y + nonzero_idx) * {_dim} + i] = {out['name']}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
-        
-    # is there is reducer, the offset is needed
-    if reducer_operations != []:
-        offset_inside_forloop_code.append(f"    loading_offsets(tile_num_rows, tile_start_coord); \n")
-        output_agent_SMEM_code.append(f"    OffsetT s_tile_row_end_offsets[TILE_ITEMS]; \n")
         
     # debug print
     # for inp in input_declarations_utils_code:
@@ -175,13 +168,7 @@ def generate_cuda_code_from_graph(traced_model):
     #  Generate the aggregator code
     #  -------------------------------------------------------------
     aggregator_code = []
-    aggregator_code_dispatch = []
     aggregator_reg_definitions = []
-    # the shared memory can be reused for multiple blockReduce
-    if aggregator_operations != []:
-        aggregator_code_dispatch.append(f"   // just padding parameters here \n")
-        aggregator_code_dispatch.append(f"   CoordinateT tile_start_coord = {{-1, tile_idx * TILE_ITEMS}}; \n")
-        aggregator_code_dispatch.append(f"   CoordinateT tile_end_coord = {{-1, min(tile_idx * TILE_ITEMS + TILE_ITEMS, spmv_params.num_nonzeros)}}; \n")
 
     for op in aggregator_operations:
         _name = op['name']
@@ -200,7 +187,7 @@ def generate_cuda_code_from_graph(traced_model):
             aggregator_code.append(f"     }} \n")
             aggregator_code.append(f"   }} \n")
 
-    # # debug print
+    # debug print
     # for op in aggregator_reg_definitions:
     #     print(f"Aggregator reg definitions: {op}")
     # for op in aggregator_code:
@@ -210,15 +197,6 @@ def generate_cuda_code_from_graph(traced_model):
     #  Generate the reducer code
     #  -------------------------------------------------------------
     reducer_code = []
-    
-    # generate the diagnoal code once
-    if reducer_operations != []:
-        reducer_diagonal_code_spmv, reducer_diagonal_code_spmv_agent, diagonal_code_spmv_agent_thread, offset_code_spmv_agent_dispatch = reducer_diagnal_code_gen()
-    else:
-        reducer_diagonal_code_spmv = []
-        reducer_diagonal_code_spmv_agent = []
-        diagonal_code_spmv_agent_thread = []
-        offset_code_spmv_agent_dispatch = []
         
     # generate the reducer code for each reducer
     for op in reducer_operations:
@@ -252,13 +230,14 @@ def generate_cuda_code_from_graph(traced_model):
     #  -------------------------------------------------------------
     #  Read template files
     #  -------------------------------------------------------------
-    with open("cuda_template/merged_agent_spmv_template.cuh", "r") as f:
+    _folder = 'reducer' if reducer_operations != [] else 'aggregator' # map only will use the aggregator template
+    with open(f"cuda_template/{_folder}/merged_agent_spmv_template.cuh", "r") as f:
         kernel_agent_template = f.read()
     
-    with open("cuda_template/merged_utils_template.cuh", "r") as f:
+    with open(f"cuda_template/merged_utils_template.cuh", "r") as f:
         utils_template = f.read()
 
-    with open("cuda_template/merged_spmv_template.cuh", "r") as f:
+    with open(f"cuda_template/{_folder}/merged_spmv_template.cuh", "r") as f:
         kernel_spmv_template = f.read()
     
     #  -------------------------------------------------------------
@@ -278,15 +257,9 @@ def generate_cuda_code_from_graph(traced_model):
     reducer_code_str = trans_str(reducer_code)
     aggregator_reg_definitions_str = trans_str(aggregator_reg_definitions)
     aggregator_code_str = trans_str(aggregator_code)
-    reducer_diagonal_code_spmv_str = trans_str(reducer_diagonal_code_spmv)
-    reducer_diagonal_code_spmv_agent_str = trans_str(reducer_diagonal_code_spmv_agent)
     output_agent_tenosrs_code_str = trans_str(output_agent_tenosrs_code)
     output_agent_SMEM_code_str = trans_str(output_agent_SMEM_code)
-    diagonal_code_spmv_agent_thread_str = trans_str(diagonal_code_spmv_agent_thread)
-    offset_code_spmv_agent_dispatch_str = trans_str(offset_code_spmv_agent_dispatch)
     output_agent_forloop_code_str = trans_str(output_agent_forloop_code)
-    offset_inside_forloop_code_str = trans_str(offset_inside_forloop_code)
-    aggregator_code_dispatch_str = trans_str(aggregator_code_dispatch)
 
     agent_kernel_code = string.Template(kernel_agent_template).substitute(
         input_declarations_code=input_declarations_str,
@@ -297,18 +270,12 @@ def generate_cuda_code_from_graph(traced_model):
         reducer_code=reducer_code_str,
         aggregator_reg_definitions=aggregator_reg_definitions_str,
         aggregator_code=aggregator_code_str,
-        reducer_diagonal_code_spmv_agent=reducer_diagonal_code_spmv_agent_str,
         output_agent_tenosrs_code=output_agent_tenosrs_code_str,
         output_agent_SMEM_code=output_agent_SMEM_code_str,
-        diagonal_code_spmv_agent_thread=diagonal_code_spmv_agent_thread_str,
-        output_agent_forloop_code=output_agent_forloop_code_str,
-        offset_inside_forloop_code=offset_inside_forloop_code_str,
-        aggregator_code_dispatch=aggregator_code_dispatch_str
+        output_agent_forloop_code=output_agent_forloop_code_str
     )
 
     spmv_kernel_code = string.Template(kernel_spmv_template).substitute(
-        reducer_diagonal_code_spmv=reducer_diagonal_code_spmv_str,
-        offset_code_spmv_agent_dispatch=offset_code_spmv_agent_dispatch_str
     )
 
     #  -------------------------------------------------------------

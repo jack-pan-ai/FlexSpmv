@@ -94,9 +94,6 @@ namespace merged
             int search_block_size = INIT_KERNEL_THREADS;
             int search_grid_size = cub::DivideAndRoundUp(num_merge_tiles + 1, search_block_size);
 
-            // [generated code]
-            ${reducer_diagonal_code_spmv}
-
             // Log spmv_kernel configuration
             if (debug_synchronous)
                 _CubLog("Invoking spmv_kernel<<<{%d,%d,%d}, %d, 0, %lld>>>(), %d items per thread, %d SM occupancy\n",
@@ -143,8 +140,6 @@ namespace merged
 
             using CoordinateT = typename cub::CubVector<OffsetT, 2>::Type;
             using SpmvParamsT = FlexParams<ValueT, OffsetT>;
-
-            ${offset_code_spmv_agent_dispatch}
 
             // fused fixup kernel with spmv
             error = merged_spmv_dispatch(spmv_params, d_temp_storage, temp_storage_bytes,
