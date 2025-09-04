@@ -9,7 +9,7 @@ from easier.core.jit import EasierTracer
 import scipy.sparse
 from scipy.io import mmwrite
 
-from codegenDevice.utils import get_dim_length
+from codegen.utils import get_dim_length
 from traceGraph.graph_trace import trace_graph
 
 

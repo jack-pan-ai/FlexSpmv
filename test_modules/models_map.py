@@ -6,8 +6,8 @@ import torch.nn as nn
 import easier as esr
 
 from test_modules.utils import save_to_coo_format
-from codegenDevice.merged_gen_gpu import generate_cuda_code_from_graph
-from codegenHost.merged_gen_cpu import generate_cpu_code_from_graph
+from codegen.merged_gen_gpu import generate_cuda_code_from_graph
+from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 from traceGraph.graph_trace import trace_model
 
 # Part 1: Define model
