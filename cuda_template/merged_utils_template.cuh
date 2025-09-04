@@ -2,7 +2,7 @@
 
 #include <cstdio>
 
-#include "DataStructShared.cuh"
+#include "data_struct_shared.cuh"
 
 #define INIT_KERNEL_THREADS 128 // INFO: this is from cub config
 

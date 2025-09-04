@@ -6,24 +6,38 @@ from torch.utils.cpp_extension import load
 flex_spmv = load(
     name="flex_spmv",
     sources=[
-        os.path.join(os.path.dirname(__file__), "flex_spmv_torch.cu"),
-        os.path.join(os.path.dirname(__file__), "flex_spmv_cuda.cu")
-    ],
-    extra_include_paths=[os.path.join(os.path.dirname(__file__), "..", "include")],
+        os.path.join(
+            os.path.dirname(__file__),
+            "flex_spmv_torch.cu"),
+        os.path.join(
+            os.path.dirname(__file__),
+            "flex_spmv_cuda.cu")],
+    extra_include_paths=[
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "include")],
     extra_cuda_cflags=[
         "-O3",
         "--use_fast_math",
         "--expt-relaxed-constexpr",
         "--expt-extended-lambda",
-        "-arch=sm_70"
-    ],
-    verbose=True
-)
+        "-arch=sm_70"],
+    verbose=True)
 
-def flex_spmv_op(spm_k, spm_l, row_offsets, col_indices_i, col_indices_j, vector_x, output_y_reducer_i, output_y_reducer_j):
+
+def flex_spmv_op(
+        spm_k,
+        spm_l,
+        row_offsets,
+        col_indices_i,
+        col_indices_j,
+        vector_x,
+        output_y_reducer_i,
+        output_y_reducer_j):
     """
     Wrapper function for the FlexSpmv operation
-    
+
     Args:
         spm_k (torch.Tensor): Tensor containing the spring constants
         spm_l (torch.Tensor): Tensor containing the rest lengths
@@ -33,8 +47,16 @@ def flex_spmv_op(spm_k, spm_l, row_offsets, col_indices_i, col_indices_j, vector
         vector_x (torch.Tensor): Input vector containing point positions
         output_y_reducer_i (torch.Tensor): Output vector for storing forces
         output_y_reducer_j (torch.Tensor): Output vector for storing forces
-        
+
     Returns:
         torch.Tensor: Output vector containing the forces on each point
     """
-    return flex_spmv.flex_spmv(spm_k, spm_l, row_offsets, col_indices_i, col_indices_j, vector_x, output_y_reducer_i, output_y_reducer_j)
+    return flex_spmv.flex_spmv(
+        spm_k,
+        spm_l,
+        row_offsets,
+        col_indices_i,
+        col_indices_j,
+        vector_x,
+        output_y_reducer_i,
+        output_y_reducer_j)

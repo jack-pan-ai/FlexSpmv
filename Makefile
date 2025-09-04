@@ -24,20 +24,21 @@ INCLUDES += -I$(CUDA_HOME)/include
 
 # CUDA Source files and executables
 # (optional) used for testing full
-FLEX_SOURCE := src/flex_spmv_full_red.cu
-FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_red
+# FLEX_SOURCE := src/flex_spmv_full_red.cu
+# FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_red
 
 # # (optional) used for testing full
 # FLEX_SOURCE := src/flex_spmv_full_agg.cu
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_agg
 
 # # (optional) used for testing map
-# FLEX_SOURCE := src/flex_spmv_map.cu
-# FLEX_EXEC := $(BIN_DIR)/flex_spmv_map
+FLEX_SOURCE := src/flex_spmv_map.cu
+FLEX_EXEC := $(BIN_DIR)/flex_spmv_map
 
 # CPU Source files and executables
 # CPU_SOURCE := main.cpp
 # CPU_EXEC := $(BIN_DIR)/merged_system_cpu
+# (optional) used for testing map
 CPU_SOURCE := mainMap.cpp
 CPU_EXEC := $(BIN_DIR)/merged_system_cpu_map
 

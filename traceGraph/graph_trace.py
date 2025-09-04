@@ -19,16 +19,20 @@ info_nodes = {
 }
 
 # Part 1: Trace the model with torch.fx
+
+
 def trace_model(model):
     tracer = EasierTracer()
     traced_model = tracer.trace(model)
     # print("FX Graph:")
-    traced_model.print_tabular()    
+    traced_model.print_tabular()
     return traced_model
 
 # Part 2: Generate CUDA code from the graph
+
+
 def trace_graph(traced_model):
-    
+
     # Analyze the graph and extract operations
     inputs = []
     _input_keys = set()
@@ -78,7 +82,7 @@ def trace_graph(traced_model):
                         "shape": info_nodes[str(arg.name)]['shape']
                     }
                 )
-    
+
     # # debug print
     # for inp in inputs:
     #     print(f"Input: {inp}")
@@ -92,31 +96,35 @@ def trace_graph(traced_model):
     _nodes = list(traced_model.nodes)  # O(n), done once
     _n = len(_nodes)
     for i in range(_n):
-        # current node and forward node 
+        # current node and forward node
         node_current = _nodes[i]
         node_forward = _nodes[i + 1] if i < _n - 1 else None
 
-        # if the current node is a get_attr, and the forward node is a call_module and the target is a selector, then add the selector to the selector register
+        # if the current node is a get_attr, and the forward node is a
+        # call_module and the target is a selector, then add the selector to
+        # the selector register
         if node_current.op == 'get_attr':
-            if node_forward.op == 'call_module' and 'selector' in str(node_forward.target):
+            if node_forward.op == 'call_module' and 'selector' in str(
+                    node_forward.target):
                 selector_register.append(
                     {
                         "name": node_current.name,
                         "target": node_current.target,
                         "dtype": "TensorKeyT",
-                        "selector": 1, # represents the selector is used for vector x
+                        "selector": 1,  # represents the selector is used for vector x
                         "selector_name": node_forward.target,
                         "shape": info_nodes[node_current.target]['shape']
                     }
                 )
             else:
-                # tensor here is imitate the sparse matrix, not used for vector x
+                # tensor here is imitate the sparse matrix, not used for vector
+                # x
                 selector_register.append(
                     {
                         "name": node_current.name,
                         "target": node_current.target,
                         "dtype": "TensorT",
-                        "selector": 0, # represents the selector is for edge tensor, not used for vector x
+                        "selector": 0,  # represents the selector is for edge tensor, not used for vector x
                         "selector_name": node_current.name,
                         "shape": info_nodes[node_current.target]['shape']
                     }

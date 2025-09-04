@@ -2,7 +2,7 @@
 
 #include <cstdio>
 
-#include "DataStructShared.cuh"
+#include "data_struct_shared.cuh"
 
 #define INIT_KERNEL_THREADS 128 // INFO: this is from cub config
 
@@ -246,15 +246,10 @@ template <
 struct FlexParams
 {
     // [code generation]
-      ValueT *vector_x_ptr; 
-  OffsetT *selector_1_ptr; 
-  OffsetT *selector_2_ptr; 
-  ValueT *spm_1_ptr; 
+      ValueT *spm_1_ptr; 
   ValueT *spm_2_ptr; 
   ValueT *output_y_add_ptr; 
   ValueT *output_y_add_1_ptr; 
-  ValueT *output_y_reducer_1_ptr; 
-  ValueT *output_y_reducer_2_ptr; 
 
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.
