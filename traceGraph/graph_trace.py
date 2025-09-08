@@ -19,8 +19,6 @@ info_nodes = {
 }
 
 # Part 1: Trace the model with torch.fx
-
-
 def trace_model(model):
     tracer = EasierTracer()
     traced_model = tracer.trace(model)
@@ -29,8 +27,6 @@ def trace_model(model):
     return traced_model
 
 # Part 2: Generate CUDA code from the graph
-
-
 def trace_graph(traced_model):
 
     # Analyze the graph and extract operations
