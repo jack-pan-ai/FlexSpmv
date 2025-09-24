@@ -85,8 +85,8 @@ void SpmvGoldCPU_aggregators(const ValueT *tensor_v, const ValueT *tensor_spm1,
   for (OffsetT i = 0; i < nnz; ++i) {
     OffsetT selector_i = tensor_v1_idx[i];
     OffsetT selector_j = tensor_v2_idx[i];
-    const ValueT *v_i = &tensor_v[selector_i * nv_dim];
-    const ValueT *v_j = &tensor_v[selector_j * nv_dim];
+    // const ValueT *v_i = &tensor_v[selector_i * nv_dim];
+    // const ValueT *v_j = &tensor_v[selector_j * nv_dim];
     const ValueT *spm_i = &tensor_spm1[i * ne1_dim];
     const ValueT *spm_j = &tensor_spm2[i * ne2_dim];
 
@@ -274,9 +274,9 @@ inline bool RunOmpMergeSystemQuickTest() {
 int main(int argc, char **argv) {
   // Default parameters
   bool use_double = false;
-  int num_rows = 8;
-  int num_cols = 16;
-  int nnz = 20;
+  int num_rows = 1231;
+  int num_cols = 5435;
+  int nnz = 1231432;
   int seed = 123;
   bool verbose = true;
   bool verbose2 = false;

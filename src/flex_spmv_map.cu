@@ -230,7 +230,7 @@ float TestGpuMergeCsrmv_from_scratch(
     {
         int compare = VerifyDeviceResults(
             map_1, map_2, 
-            params.output_y_add_ptr, params.output_y_add_1_ptr, 
+            params.output_y_y_add_1_ptr, params.output_y_y_add_2_ptr, 
             g_verbose,
             args
         );
@@ -405,8 +405,8 @@ void RunTest(
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_1_ptr, sizeof(ValueT) * args.ne * args.ne1_dim));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_2_ptr, sizeof(ValueT) * args.ne * args.ne2_dim));
     
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_add_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
     params.num_rows         = args.num_rows;
     params.num_cols         = args.num_cols;
     params.num_nonzeros     = args.ne;
@@ -430,8 +430,8 @@ void RunTest(
     // if (params.selector_1_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_1_ptr));
     // if (params.selector_2_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_2_ptr));
     // if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
-    if (params.output_y_add_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_add_ptr));
-    if (params.output_y_add_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_add_1_ptr));
+    if (params.output_y_y_add_1_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_1_ptr));
+    if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
     // if (params.output_y_sum_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_1_ptr));
     // if (params.output_y_sum_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_2_ptr));
 
@@ -499,13 +499,10 @@ int main(int argc, char **argv)
     std::string         mtx_filename;
     int                 timing_iterations   = 100;
     // tesnor info
-    args.nv = 5;
-    args.ne = 15;
-    args.num_rows = 5;
-    args.num_cols = 10;
-    // args.nv_shape = {2, 1};
-    // args.ne1_shape = {2, 1};
-    // args.ne2_shape = {2, 3};
+    args.nv = 12314;
+    args.ne = 1231234;
+    args.num_rows = 1314;
+    args.num_cols = 12314;
     args.nv_dim = 2;
     args.ne1_dim = 2;
     args.ne2_dim = 6;
@@ -526,24 +523,23 @@ int main(int argc, char **argv)
     args.GetCmdLineArgument("ne2_dim", args.ne2_dim);
 
 
-    // if (g_verbose) {
-        printf("args.num_rows: %ld\n", (long) args.num_rows);
-        printf("args.num_cols: %ld\n", (long) args.num_cols);
-        printf("args.ne: %ld\n", (long) args.ne);
-        printf("args.nv: %ld\n", (long) args.nv);
-        printf("args.nv_dim: %d\n", args.nv_dim);
-        printf("args.ne1_dim: %d\n", args.ne1_dim);
-        printf("args.ne2_dim: %d\n", args.ne2_dim);
-        // for (int i = 0; i < args.nv_shape.size(); ++i) {
-        //     printf("args.nv_shape[%d]: %ld\n", i, (long) args.nv_shape[i]);
-        // }
-        // for (int i = 0; i < args.ne1_shape.size(); ++i) {
-        //     printf("args.ne1_shape[%d]: %ld\n", i, (long) args.ne1_shape[i]);
-        // }
-        // for (int i = 0; i < args.ne2_shape.size(); ++i) {
-        //     printf("args.ne2_shape[%d]: %ld\n", i, (long) args.ne2_shape[i]);
-        // }
-    // }
+    printf("args.num_rows: %ld\n", (long) args.num_rows);
+    printf("args.num_cols: %ld\n", (long) args.num_cols);
+    printf("args.ne: %ld\n", (long) args.ne);
+    printf("args.nv: %ld\n", (long) args.nv);
+    printf("args.nv_dim: %d\n", args.nv_dim);
+    printf("args.ne1_dim: %d\n", args.ne1_dim);
+    printf("args.ne2_dim: %d\n", args.ne2_dim);
+    for (int i = 0; i < args.nv_shape.size(); ++i) {
+        printf("args.nv_shape[%d]: %ld\n", i, (long) args.nv_shape[i]);
+    }
+    for (int i = 0; i < args.ne1_shape.size(); ++i) {
+        printf("args.ne1_shape[%d]: %ld\n", i, (long) args.ne1_shape[i]);
+    }
+    for (int i = 0; i < args.ne2_shape.size(); ++i) {
+        printf("args.ne2_shape[%d]: %ld\n", i, (long) args.ne2_shape[i]);
+    }
+    
     // Initialize device
     CubDebugExit(args.DeviceInit());
 

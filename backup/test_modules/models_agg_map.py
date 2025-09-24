@@ -4,7 +4,6 @@ import argparse
 
 import easier as esr
 
-from test_modules.utils import save_to_coo_format
 from codegen.merged_gen_gpu import generate_cuda_code_from_graph
 from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 from traceGraph.graph_trace import trace_model
@@ -210,8 +209,7 @@ def system_test(
     # time_per_element = avg_time_per_iter / num_nnz * 1000  # microseconds
     # per element
     print(
-        f"Model forward calculation took: { \
-            avg_time_per_iter:.6f} ms per iteration")
+        f"Model forward calculation took: {avg_time_per_iter:.6f} ms per iteration")
     # print(f"Throughput: {num_nnz / avg_time_per_iter * 1000:.0f} elements/second")
 
     print("\nStep 3: Generating CUDA code from the graph")

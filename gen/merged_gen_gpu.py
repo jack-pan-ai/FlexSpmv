@@ -8,8 +8,8 @@ import easier as esr
 from easier.core.jit import EasierTracer
 import scipy.sparse
 
-from codegen.utils import get_dim_length
-from traceGraph.graph_trace import trace_graph
+from gen.utils import get_dim_length
+from trace.graph_trace import trace_graph
 
 
 def generate_cuda_code_from_graph(traced_model):
@@ -17,7 +17,7 @@ def generate_cuda_code_from_graph(traced_model):
     Generate CUDA code from the graph
 
     Args:
-        traced_model: the traced model
+        traced_model: the traced model, here is jit engine
     """
 
     # Analyze the graph and extract operations
@@ -29,9 +29,11 @@ def generate_cuda_code_from_graph(traced_model):
     aggregator_operations = []
     outputs = []
 
-    # Analyze the graph and extract operations, 1) input and output, 2) selector, 3) map 4) reducer and aggregator
-    inputs, outputs, selector_register, map_operations, reducer_operations, aggregator_operations = trace_graph(
-        traced_model)
+    # Analyze the graph and extract operations, 
+    # 1) input and output, 2) selector, 
+    # 3) map 4) reducer and aggregator
+    inputs, outputs, selector_register, map_operations, \
+        reducer_operations, aggregator_operations = trace_graph(traced_model)
 
     # Generate the code
     # Generate the input/output code
@@ -44,75 +46,63 @@ def generate_cuda_code_from_graph(traced_model):
     output_agent_forloop_code = []
     _tensor_names = set()
     for inp in inputs:
+        name = inp['name']
         if inp['dtype'] == 'int':
             # column indices
             input_declarations_utils_code.append(
-                f"  OffsetT *{inp['name'] + '_ptr'}; \n")
+                f"  OffsetT *{name}_ptr; \n")
             input_declarations_code.append(
-                f"  ColumnIndicesIteratorT {
-                    inp['name'] + '_ptr'}; \n")
+                f"  ColumnIndicesIteratorT {name}_ptr; \n")
             input_init_code.append(
-                f"    {
-                    inp['name'] +
-                    '_ptr'}(spmv_params.{
-                    inp['name'] +
-                    '_ptr'}), \n")
+                f"    {name}_ptr(spmv_params.{name}_ptr), \n")
         else:
             # spm and vector x
             input_declarations_utils_code.append(
-                f"  ValueT *{inp['name'] + '_ptr'}; \n")
+                f"  ValueT *{name}_ptr; \n")
             input_declarations_code.append(
-                f"  VectorValueIteratorT {
-                    inp['name'] + '_ptr'}; \n")
+                f"  VectorValueIteratorT {name}_ptr; \n")
             input_init_code.append(
-                f"    {
-                    inp['name'] +
-                    '_ptr'}(spmv_params.{
-                    inp['name'] +
-                    '_ptr'}), \n")
-            if inp['target'] not in _tensor_names:
+                f"    {name}_ptr(spmv_params.{name}_ptr), \n")
+            target = inp['target']
+            if target not in _tensor_names:
                 _dim = get_dim_length(inp['shape'])
                 input_agent_tenosrs_code.append(
-                    f"  typedef Tensor<ValueT, {_dim}> TensorInput_{
-                        inp['target']}_T; \n")
-                _tensor_names.add(inp['target'])
+                    f"  typedef Tensor<ValueT, {_dim}> TensorInput_{target}_T; \n")
+                _tensor_names.add(target)
 
     # output code in the declarations utils file
     for out in outputs:
+        out_name = out['name']
         input_declarations_utils_code.append(
-            f"  ValueT *{"output_y_" + out['name'] + "_ptr"}; \n")
+            f"  ValueT *output_y_{out_name}_ptr; \n")
         _dim = get_dim_length(out['shape'])
         if 'reducer' in str(out['target']):
             # reducer outside the forloop
             output_agent_tenosrs_code.append(
                 f"  // Tensor and TensorKey for reducers \n")
             output_agent_tenosrs_code.append(
-                f"  typedef TensorKey<OffsetT, ValueT, {_dim}> TensorKeyOutput_{
-                    out['name']}_T; \n")
+                f"  typedef TensorKey<OffsetT, ValueT, {_dim}> \
+                    TensorKeyOutput_{out_name}_T; \n")
             output_agent_tenosrs_code.append(
-                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{
-                    out['name']}_T; \n")
+                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out_name}_T; \n")
             output_agent_tenosrs_code.append(
                 f"  // Reduce-value-by-segment scan operator \n")
             output_agent_tenosrs_code.append(
-                f"  typedef ReduceTensorByKeyOp<TensorKeyOutput_{
-                    out['name']}_T> ReduceBySegmentOp_{
-                    out['name']}_T; \n")
+                f"  typedef ReduceTensorByKeyOp<TensorKeyOutput_{out_name}_T>\
+                        ReduceBySegmentOp_{out_name}_T; \n")
             output_agent_tenosrs_code.append(f"  typedef BlockScan< \n")
             output_agent_tenosrs_code.append(
-                f"            TensorKeyOutput_{
-                    out['name']}_T, \n")
+                f"            TensorKeyOutput_{out_name}_T, \n")
             output_agent_tenosrs_code.append(f"            BLOCK_THREADS, \n")
             output_agent_tenosrs_code.append(
                 f"            AgentSpmvPolicyT::SCAN_ALGORITHM> \n")
             output_agent_tenosrs_code.append(
-                f"            BlockScan_{out['name']}_T; \n")
+                f"            BlockScan_{out_name}_T; \n")
             output_agent_SMEM_code.append(
-                f"               SmemReuseReducer<{_dim}, BlockScan_{
-                    out['name']}_T> smem_{
-                    out['name']}; \n")
+                f"               SmemReuseReducer<{_dim}, \
+                    BlockScan_{out_name}_T> smem_{out_name}; \n")
         elif 'sum' in str(out['target']):
-            _name = out['name']
+            _name = out_name
             output_agent_tenosrs_code.append(
                 f"  // Tensor type and block reducefor output \n")
             output_agent_tenosrs_code.append(
@@ -130,34 +120,31 @@ def generate_cuda_code_from_graph(traced_model):
         else:
             # used for map output
             output_agent_tenosrs_code.append(
-                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{
-                    out['name']}_T; \n")
+                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out_name}_T; \n")
             # map inside the forloop
             output_agent_forloop_code.append(f"  #pragma unroll \n")
             output_agent_forloop_code.append(
                 f"  for (int i = 0; i < {_dim}; i++) \n")
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
-                f"    spmv_params.output_y_{
-                    out['name']}_ptr[(tile_start_coord.y + nonzero_idx) * {_dim} + i] = {
-                    out['name']}.values[i]; \n")
+                f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) * {_dim} + i] = {out_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # debug print
-    # for inp in input_declarations_utils_code:
-    #     print(f"Input declarations utils: {inp}")
-    # for inp in input_declarations_code:
-    #     print(f"Input declarations: {inp}")
-    # for inp in input_init_code:
-    #     print(f"Input init code: {inp}")
-    # for inp in input_agent_tenosrs_code:
-    #     print(f"Input agent tenosrs code: {inp}")
-    # for out in output_agent_tenosrs_code:
-    #     print(f"Output agent tenosrs code: {out}")
-    # for out in output_agent_SMEM_code:
-    #     print(f"Output agent SMEM code: {out}")
-    # for out in output_agent_forloop_code:
-    #     print(f"Output agent forloop code: {out}")
+    for inp in input_declarations_utils_code:
+        print(f"Input declarations utils: {inp}")
+    for inp in input_declarations_code:
+        print(f"Input declarations: {inp}")
+    for inp in input_init_code:
+        print(f"Input init code: {inp}")
+    for inp in input_agent_tenosrs_code:
+        print(f"Input agent tenosrs code: {inp}")
+    for out in output_agent_tenosrs_code:
+        print(f"Output agent tenosrs code: {out}")
+    for out in output_agent_SMEM_code:
+        print(f"Output agent SMEM code: {out}")
+    for out in output_agent_forloop_code:
+        print(f"Output agent forloop code: {out}")
 
     # Generate the selector register code
     selector_code = []
@@ -169,28 +156,22 @@ def generate_cuda_code_from_graph(traced_model):
         _selector_name = inter['selector_name']
         if inter['selector'] == 1:
             # load the selector register
+            current = f"{_name}_ptr_current"
             selector_code.append(
-                f"    ColumnIndicesIteratorT {
-                    _name +
-                    '_ptr_current'} = {
-                    _selector_name +
-                    '_ptr'} + tile_start_coord.y + nonzero_idx; \n")
+                f"    ColumnIndicesIteratorT {current} = {_selector_name}_ptr + tile_start_coord.y + nonzero_idx; \n")
             selector_code.append(
-                f"    TensorInput_{_target}_T {_selector_name}({_target + '_ptr'} + *{_name + '_ptr_current'} * {_dim}); \n")
+                f"    TensorInput_{_target}_T {_selector_name}({_target}_ptr + *{current} * {_dim}); \n")
         else:
             # spm loading
+            current = f"{_name}_ptr_current"
             selector_code.append(
-                f"    VectorValueIteratorT {
-                    _name +
-                    '_ptr_current'} = {
-                    _selector_name +
-                    '_ptr'} + (tile_start_coord.y + nonzero_idx) * {_dim}; \n")
+                f"    VectorValueIteratorT {current} = {_selector_name}_ptr + (tile_start_coord.y + nonzero_idx) * {_dim}; \n")
             selector_code.append(
-                f"    TensorInput_{_target}_T {_selector_name}({_target + '_ptr_current'}); \n")
+                f"    TensorInput_{_target}_T {_selector_name}({_target}_ptr_current); \n")
 
-    # # debug print
-    # for inter in selector_code:
-    #     print(f"Selector code: {inter}")
+    # debug print
+    for inter in selector_code:
+        print(f"Selector code: {inter}")
 
     # Generate the CUDA kernel code (map operations)
     map_code = []
@@ -203,12 +184,10 @@ def generate_cuda_code_from_graph(traced_model):
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + {op['args'][1]}; \n")
         elif _op == 'norm':
             map_code.append(
-                f"    ValueT {_name} = {
-                    op['args'][0]}.l2Norm(); \n")
+                f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
         elif _op == 'reducer':
             map_code.append(
-                f"    temp_storage.smem_{_name}.s_tile_value_reducer[nonzero_idx] = {
-                    op['args'][0]}; \n")
+                f"    temp_storage.smem_{_name}.s_tile_value_reducer[nonzero_idx] = {op['args'][0]}; \n")
         elif _op == 'sum':
             map_code.append(f"    {_name} = {_name} + {op['args'][0]}; \n")
         else:
@@ -216,9 +195,8 @@ def generate_cuda_code_from_graph(traced_model):
             raise ValueError(f"Operation {_op} not supported")
 
     # # Debug print to check kernel operations
-    # print("Generated kernel operations:")
-    # for op in map_code:
-    #     print(op)
+    for op in map_code:
+        print("Map code: ", op)
 
     # Generate the aggregator code
     aggregator_code = []
@@ -246,10 +224,10 @@ def generate_cuda_code_from_graph(traced_model):
             aggregator_code.append(f"   }} \n")
 
     # debug print
-    # for op in aggregator_reg_definitions:
-    #     print(f"Aggregator reg definitions: {op}")
-    # for op in aggregator_code:
-    #     print(f"Aggregator code: {op}")
+    for op in aggregator_reg_definitions:
+        print(f"Aggregator reg definitions: {op}")
+    for op in aggregator_code:
+        print(f"Aggregator code: {op}")
 
     # Generate the reducer code
     reducer_code = []
@@ -284,8 +262,8 @@ def generate_cuda_code_from_graph(traced_model):
         reducer_code.append(f"   CTA_SYNC(); \n")
 
     # # debug print
-    # for op in reducer_code:
-    #     print(f"Reducer code: {op}")
+    for op in reducer_code:
+        print(f"Reducer code: {op}")
 
     # Create directories for generated code if they don't exist
     os.makedirs("include", exist_ok=True)

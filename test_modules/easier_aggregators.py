@@ -29,8 +29,8 @@ class System(esr.Module):
             row_indices,
             output_y_map_1,
             output_y_map_2,
-            output_y_reducer_1,
-            output_y_reducer_2,
+            output_y_aggregator_1,
+            output_y_aggregator_2,
             num_rows):
         super().__init__()
 
@@ -47,16 +47,14 @@ class System(esr.Module):
                                          mode = 'partition')  # (N, 2)
         self.y_add_2 = esr.Tensor(output_y_map_2, 
                                          mode = 'partition')  # (N, 6)
-        self.y_reducer_1 = esr.Tensor(output_y_reducer_1, 
-                                             mode = 'partition')  # (M, 2)
-        self.y_reducer_2 = esr.Tensor(output_y_reducer_2, 
-                                             mode = 'partition')  # (M, 6)
+        self.y_aggregator_1 = esr.Tensor(output_y_aggregator_1, 
+                                             mode = 'replicate')  # (2)
+        self.y_aggregator_2 = esr.Tensor(output_y_aggregator_2, 
+                                             mode = 'replicate')  # (6)
 
         # Selectors and reducers
         self.selector_1 = esr.Selector(self.col_indices_1)
         self.selector_2 = esr.Selector(self.col_indices_2)
-        self.reducer_1 = esr.Reducer(self.row_indices, num_rows)
-        self.reducer_2 = esr.Reducer(self.row_indices, num_rows)
 
     def forward(self):
 
@@ -66,8 +64,8 @@ class System(esr.Module):
         self.y_add_1[:] = r_1 + self.spm_1  # (N, 2)
         self.y_add_2[:] = r_2 + self.spm_2  # (N, 2, 3) (N, 6)
 
-        self.y_reducer_1[:] = self.reducer_1(self.y_add_1)  # (M, 2)
-        self.y_reducer_2[:] = self.reducer_2(self.y_add_2)  # (M, 2, 3) (M, 6)
+        self.y_aggregator_1[:] = esr.sum(self.y_add_1)  # (2)
+        self.y_aggregator_2[:] = esr.sum(self.y_add_2)  # (6)
 
 def system_test(
         num_nnz=20,
@@ -112,15 +110,13 @@ def system_test(
         num_nnz, 
         2, 3, 
         device=device, dtype=dtype)  # (N, 2, 3)
-    output_y_reducer_1 = torch.zeros(
-        num_rows,
+    output_y_aggregator_1 = torch.zeros(
         2, 1,
         device=device,
-        dtype=dtype)  # (M, 2, 1)
-    output_y_reducer_2 = torch.zeros(
-        num_rows, 
+        dtype=dtype)  # (2)
+    output_y_aggregator_2 = torch.zeros(
         2, 3, 
-        device=device, dtype=dtype)  # (M, 2, 3)
+        device=device, dtype=dtype)  # (6)
     # Generate COO row indices - each element 
     # specifies which row the non-zero belongs to
     row_indices = torch.randint(
@@ -135,12 +131,8 @@ def system_test(
         spm_1, spm_2, vector_x, col_indices_1, 
         col_indices_2, row_indices,
         output_y_map_1, output_y_map_2,
-        output_y_reducer_1, output_y_reducer_2, num_rows
+        output_y_aggregator_1, output_y_aggregator_2, num_rows
     )
-    # model = System(
-    #     spm_1, vector_x, col_indices_1, row_indices,
-    #     output_y_reducer_1, num_rows
-    # )
 
     print("Step 1: Tracing model with easier")
     start_time = time.time()

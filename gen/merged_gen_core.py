@@ -39,27 +39,28 @@ def declarations_gen(
     _tensor_names = set()
 
     for inp in inputs:
+        name = inp['name']
         if inp['dtype'] == 'int':
             # column indices
             input_parameters_code.append(
-                f"  OffsetT *__restrict {inp['name'] + '_ptr'}, \n")
+                f"  OffsetT *__restrict {name}_ptr, \n")
         else:
             # spm and vector x
             input_parameters_code.append(
-                f"  ValueT *__restrict {inp['name'] + '_ptr'}, \n")
+                f"  ValueT *__restrict {name}_ptr, \n")
 
             if inp['target'] not in _tensor_names:
                 _dim = get_dim_length(inp['shape'])
+                target = inp['target']
                 input_agent_tenosrs_code.append(
-                    f"  typedef Tensor<ValueT, {_dim}> TensorInput_{
-                        inp['target']}_T; \n")
-                _tensor_names.add(inp['target'])
+                    f"  typedef Tensor<ValueT, {_dim}> TensorInput_{target}_T; \n")
+                _tensor_names.add(target)
 
     # output code in the declarations utils file
     for out in outputs:
         _name = out['name']
         input_parameters_code.append(
-            f"  ValueT *__restrict {"output_y_" + _name + "_ptr"}, \n")
+            f"  ValueT *__restrict output_y_{_name}_ptr, \n")
 
         _dim = get_dim_length(out['shape'])
         if 'reducer' in str(out['target']):
@@ -97,19 +98,18 @@ def declarations_gen(
         _selector_name = inter['selector_name']
         if inter['selector'] == 1:
             # load the selector register
+            column_indices = f"column_indices_{_name}"
+            selector_ptr = f"{_selector_name}_ptr"
+            target_ptr = f"{_target}_ptr"
             selector_code.append(
-                f"  OffsetT {'column_indices_' + _name} =\
-                    {_selector_name + '_ptr'}[thread_coord.y]; \n")
+                f"  OffsetT {column_indices} = {selector_ptr}[thread_coord.y]; \n")
             selector_code.append(
-                f"  TensorInput_{_target}_T \
-                    {_selector_name}({_target + '_ptr'} + \
-                    {'column_indices_' + _name} * {_dim}); \n")
+                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + {column_indices} * {_dim}); \n")
         else:
             # spm loading
+            target_ptr = f"{_target}_ptr"
             selector_code.append(
-                f"  TensorInput_{_target}_T \
-                    {_selector_name}({_target + '_ptr'} + \
-                    thread_coord.y * {_dim}); \n")
+                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + thread_coord.y * {_dim}); \n")
 
     return input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, \
         output_agent_forloop_code, selector_code
@@ -137,8 +137,7 @@ def map_gen(map_operations):
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + {op['args'][1]}; \n")
         elif _op == 'norm':
             map_code.append(
-                f"    ValueT {_name} = {
-                    op['args'][0]}.l2Norm(); \n")
+                f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
         elif _op == 'reducer':
             pass
         elif _op == 'sum':

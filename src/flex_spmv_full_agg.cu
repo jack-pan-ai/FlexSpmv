@@ -284,8 +284,8 @@ float TestGpuMergeCsrmv_from_scratch(
         int compare = VerifyDeviceResults(
             agg_1, agg_2, 
             map_1, map_2, 
-            params.output_y_sum_1_ptr, params.output_y_sum_2_ptr, 
-            params.output_y_add_ptr, params.output_y_add_1_ptr, 
+            params.output_y_y_aggregator_1_ptr, params.output_y_y_aggregator_2_ptr, 
+            params.output_y_y_add_1_ptr, params.output_y_y_add_2_ptr, 
             g_verbose,
             args
         );
@@ -324,7 +324,7 @@ void DisplayPerf(
 {
     float nz_throughput, effective_bandwidth;
     size_t total_bytes = (
-        args.ne * sizeof(ValueT) * args.ne1_dim *2 // read and write spm_i and map_i
+        args.ne * sizeof(ValueT) * args.ne1_dim *2 // read and write spm_i and y_add_i
         + args.ne * sizeof(ValueT) * args.ne2_dim *2 // read and write spm_j and map_j
         + args.num_rows * sizeof(OffsetT) * 2 // read and write row_end_offsets
         + args.ne * sizeof(OffsetT) * 2 // read selector_i and selector_j
@@ -431,10 +431,10 @@ void RunTest(
     }
 
     // Output vector
-    ValueT* agg_1    = new ValueT[args.ne1_dim];
-    ValueT* agg_2    = new ValueT[args.ne2_dim];
-    ValueT* map_1    = new ValueT[args.ne * args.ne1_dim];
-    ValueT* map_2    = new ValueT[args.ne * args.ne2_dim];
+    ValueT* agg_1    = new ValueT[args.ne1_dim]();
+    ValueT* agg_2    = new ValueT[args.ne2_dim]();
+    ValueT* map_1    = new ValueT[args.ne * args.ne1_dim]();
+    ValueT* map_2    = new ValueT[args.ne * args.ne2_dim]();
 
     // Compute reference answer
     SpmvGold(
@@ -469,10 +469,10 @@ void RunTest(
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.selector_2_ptr,     sizeof(OffsetT) * args.ne));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.vector_x_ptr,       sizeof(ValueT) * args.nv * args.nv_dim));
 
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_add_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_sum_1_ptr,       sizeof(ValueT) * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_sum_2_ptr,       sizeof(ValueT) * args.ne2_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_aggregator_1_ptr,       sizeof(ValueT) * args.ne1_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_aggregator_2_ptr,       sizeof(ValueT) * args.ne2_dim));
     params.num_rows         = args.num_rows;
     params.num_cols         = args.num_cols;
     params.num_nonzeros     = args.ne;
@@ -499,10 +499,10 @@ void RunTest(
     if (params.selector_1_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_1_ptr));
     if (params.selector_2_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_2_ptr));
     if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
-    if (params.output_y_add_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_add_ptr));
-    if (params.output_y_add_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_add_1_ptr));
-    if (params.output_y_sum_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_1_ptr));
-    if (params.output_y_sum_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_2_ptr));
+    if (params.output_y_y_add_1_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_1_ptr));
+    if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
+    if (params.output_y_y_aggregator_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_aggregator_1_ptr));
+    if (params.output_y_y_aggregator_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_aggregator_2_ptr));
 
     if (tensor_v)                   delete[] tensor_v;
     if (tensor_spm1)                delete[] tensor_spm1;
@@ -570,13 +570,10 @@ int main(int argc, char **argv)
     std::string         mtx_filename;
     int                 timing_iterations   = 100;
     // tesnor info
-    args.nv = 5;
-    args.ne = 15;
-    args.num_rows = 5;
-    args.num_cols = 10;
-    // args.nv_shape = {2, 1};
-    // args.ne1_shape = {2, 1};
-    // args.ne2_shape = {2, 3};
+    args.nv = 12314;
+    args.ne = 1231234;
+    args.num_rows = 1214;
+    args.num_cols = 12314;
     args.nv_dim = 2;
     args.ne1_dim = 2;
     args.ne2_dim = 6;

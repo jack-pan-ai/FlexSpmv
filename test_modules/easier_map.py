@@ -23,51 +23,25 @@ class System(esr.Module):
             self,
             spm_1,
             spm_2,
-            vector_x,
-            col_indices_1,
-            col_indices_2,
-            row_indices,
             output_y_map_1,
             output_y_map_2,
-            output_y_reducer_1,
-            output_y_reducer_2,
             num_rows):
         super().__init__()
 
         # Inputs
         self.spm_1 = esr.Tensor(spm_1, mode = 'partition')  # (N, 2)
         self.spm_2 = esr.Tensor(spm_2, mode = 'partition')  # (N, 2, 3) (N, 6)
-        self.vector_x = esr.Tensor(vector_x, mode = 'partition')  # (N, 2)
-        self.col_indices_1 = col_indices_1  # (N, 1)
-        self.col_indices_2 = col_indices_2  # (N, 1)
-        self.row_indices = row_indices  # (N,) - COO row indices
-
+        
         # Outputs
         self.y_add_1 = esr.Tensor(output_y_map_1, 
                                          mode = 'partition')  # (N, 2)
         self.y_add_2 = esr.Tensor(output_y_map_2, 
                                          mode = 'partition')  # (N, 6)
-        self.y_reducer_1 = esr.Tensor(output_y_reducer_1, 
-                                             mode = 'partition')  # (M, 2)
-        self.y_reducer_2 = esr.Tensor(output_y_reducer_2, 
-                                             mode = 'partition')  # (M, 6)
-
-        # Selectors and reducers
-        self.selector_1 = esr.Selector(self.col_indices_1)
-        self.selector_2 = esr.Selector(self.col_indices_2)
-        self.reducer_1 = esr.Reducer(self.row_indices, num_rows)
-        self.reducer_2 = esr.Reducer(self.row_indices, num_rows)
-
+        
     def forward(self):
 
-        r_1 = self.selector_1(self.vector_x)  # (N, 2)
-        r_2 = self.selector_2(self.vector_x)  # (N, 2)
-
-        self.y_add_1[:] = r_1 + self.spm_1  # (N, 2)
-        self.y_add_2[:] = r_2 + self.spm_2  # (N, 2, 3) (N, 6)
-
-        self.y_reducer_1[:] = self.reducer_1(self.y_add_1)  # (M, 2)
-        self.y_reducer_2[:] = self.reducer_2(self.y_add_2)  # (M, 2, 3) (M, 6)
+        self.y_add_1[:] = self.spm_1  + self.spm_1  # (N, 2)
+        self.y_add_2[:] = self.spm_2  + self.spm_2  # (N, 2, 3) (N, 6)
 
 def system_test(
         num_nnz=20,
@@ -98,11 +72,6 @@ def system_test(
                        device=device, dtype=dtype)  # (N, 2, 1)
     spm_2 = torch.rand(num_nnz, 2, 3, 
                        device=device, dtype=dtype)  # (N, 2, 3)
-    vector_x = torch.rand(
-        num_cols,
-        dim_x, 1,
-        device=device,
-        dtype=dtype)  # (N, 2, 1)
     output_y_map_1 = torch.zeros(
         num_nnz,
         2, 1,
@@ -112,35 +81,12 @@ def system_test(
         num_nnz, 
         2, 3, 
         device=device, dtype=dtype)  # (N, 2, 3)
-    output_y_reducer_1 = torch.zeros(
-        num_rows,
-        2, 1,
-        device=device,
-        dtype=dtype)  # (M, 2, 1)
-    output_y_reducer_2 = torch.zeros(
-        num_rows, 
-        2, 3, 
-        device=device, dtype=dtype)  # (M, 2, 3)
-    # Generate COO row indices - each element 
-    # specifies which row the non-zero belongs to
-    row_indices = torch.randint(
-        0, num_rows, (num_nnz,), dtype=torch.int64, device=device)
-    col_indices_1 = torch.randint(
-        0, num_cols, (num_nnz,), dtype=torch.int64, device=device)
-    col_indices_2 = torch.randint(
-        0, num_cols, (num_nnz,), dtype=torch.int64, device=device)
 
     # pytorch model for code generation
     model = System(
-        spm_1, spm_2, vector_x, col_indices_1, 
-        col_indices_2, row_indices,
-        output_y_map_1, output_y_map_2,
-        output_y_reducer_1, output_y_reducer_2, num_rows
+        spm_1, spm_2,
+        output_y_map_1, output_y_map_2, num_rows
     )
-    # model = System(
-    #     spm_1, vector_x, col_indices_1, row_indices,
-    #     output_y_reducer_1, num_rows
-    # )
 
     print("Step 1: Tracing model with easier")
     start_time = time.time()

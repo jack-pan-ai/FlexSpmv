@@ -95,15 +95,15 @@ void OmpMergeSystem(
     // [code generation]
       ValueT *__restrict spm_1_ptr, 
   ValueT *__restrict spm_2_ptr, 
-  ValueT *__restrict output_y_add_ptr, 
-  ValueT *__restrict output_y_add_1_ptr, 
+  ValueT *__restrict output_y_y_add_1_ptr, 
+  ValueT *__restrict output_y_y_add_2_ptr, 
  int num_rows, int num_nonzeros) {
   // [code generation]
   // input and output tensors types
     typedef Tensor<ValueT, 2> TensorInput_spm_1_T; 
   typedef Tensor<ValueT, 6> TensorInput_spm_2_T; 
-   typedef Tensor<ValueT, 2> TensorOutput_add_T; 
-  typedef Tensor<ValueT, 6> TensorOutput_add_1_T; 
+   typedef Tensor<ValueT, 2> TensorOutput_y_add_1_T; 
+  typedef Tensor<ValueT, 6> TensorOutput_y_add_2_T; 
  
 
 #pragma omp parallel for schedule(static) num_threads(num_threads)
@@ -127,13 +127,13 @@ void OmpMergeSystem(
     
     for (; thread_coord.y < thread_coord_end.y; ++thread_coord.y) {
       // selector
-        TensorInput_spm_1_T                     spm_1(spm_1_ptr +                     thread_coord.y * 2); 
-  TensorInput_spm_2_T                     spm_2(spm_2_ptr +                     thread_coord.y * 6); 
+        TensorInput_spm_1_T spm_1(spm_1_ptr + thread_coord.y * 2); 
+  TensorInput_spm_2_T spm_2(spm_2_ptr + thread_coord.y * 6); 
 
 
       // mapping
-          TensorOutput_add_T add = spm_1 + spm_1; 
-    TensorOutput_add_1_T add_1 = spm_2 + spm_2; 
+          TensorOutput_y_add_1_T y_add_1 = spm_1 + spm_1; 
+    TensorOutput_y_add_2_T y_add_2 = spm_2 + spm_2; 
 
 
       // output for aggregator
@@ -142,11 +142,11 @@ void OmpMergeSystem(
       // output for map
         for (int i = 0; i < 2; i++) 
   { 
-    output_y_add_ptr[thread_coord.y * 2 + i] = add.values[i]; 
+    output_y_y_add_1_ptr[thread_coord.y * 2 + i] = y_add_1.values[i]; 
   } 
   for (int i = 0; i < 6; i++) 
   { 
-    output_y_add_1_ptr[thread_coord.y * 6 + i] = add_1.values[i]; 
+    output_y_y_add_2_ptr[thread_coord.y * 6 + i] = y_add_2.values[i]; 
   } 
 
     }

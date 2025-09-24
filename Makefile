@@ -11,11 +11,11 @@ NVCC := $(CUDA_HOME)/bin/nvcc
 CXX := g++
 
 # Flags for NVCC
-NVCC_FLAGS := -O3 -std=c++17 -arch=sm_80 -lcudart -Werror all-warnings --extended-lambda
+NVCC_FLAGS := -O3 -std=c++17 -arch=sm_70 -lcudart -Werror all-warnings --extended-lambda
 # NVCC_FLAGS += -G -g # for debug
 
 # Flags for CPU compilation
-CXX_FLAGS := -O3 -std=c++17 -Wall -Wextra -fopenmp -march=native
+CXX_FLAGS := -O3 -std=c++17 -Wall -Wextra -fopenmp -march=native -Wunused-parameter
 # CXX_FLAGS += -g -DDEBUG # for debug
 
 # Paths to include directories
@@ -23,7 +23,7 @@ INCLUDES := -I. -I.. -Iinclude
 INCLUDES += -I$(CUDA_HOME)/include
 
 # CUDA Source files and executables
-# (optional) used for testing full
+# # (optional) used for testing full
 # FLEX_SOURCE := src/flex_spmv_full_red.cu
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_red
 
@@ -32,8 +32,8 @@ INCLUDES += -I$(CUDA_HOME)/include
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_agg
 
 # # (optional) used for testing map
-FLEX_SOURCE := src/flex_spmv_map.cu
-FLEX_EXEC := $(BIN_DIR)/flex_spmv_map
+# FLEX_SOURCE := src/flex_spmv_map.cu
+# FLEX_EXEC := $(BIN_DIR)/flex_spmv_map
 
 # CPU Source files and executables
 # CPU_SOURCE := main.cpp

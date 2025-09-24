@@ -385,10 +385,10 @@ inline bool RunOmpMergeSystemQuickTest() {
 // Main function with command-line argument parsing
 int main(int argc, char **argv) {
   // Default parameters
-  bool use_double = false;
-  int num_rows = 8;
-  int num_cols = 16;
-  int nnz = 20;
+  bool use_double = true;
+  int num_rows = 3241;
+  int num_cols = 5435;
+  int nnz = 324123;
   int seed = 123;
   bool verbose = true;
   bool verbose2 = false;

@@ -80,10 +80,10 @@ def trace_graph(traced_model):
                 )
 
     # # debug print
-    # for inp in inputs:
-    #     print(f"Input: {inp}")
-    # for out in outputs:
-    #     print(f"Output: {out}")
+    for inp in inputs:
+        print(f"Input: {inp}")
+    for out in outputs:
+        print(f"Output: {out}")
     #  -------------------------------------------------------------
     #  obtain the selector in intermediate register, including the vector x and edge tensor
     #  here: obtain the data from HBM  to register, we need to consider the alignment of the data
@@ -127,8 +127,8 @@ def trace_graph(traced_model):
                 )
 
     # debug print
-    # for inter in selector_register:
-    #     print(f"Selector register: {inter}")
+    for inter in selector_register:
+        print(f"Selector register: {inter}")
 
     #  -------------------------------------------------------------
     #  obtain the map operations
@@ -177,8 +177,8 @@ def trace_graph(traced_model):
                 'shape': info_nodes[node.name]['shape']
             })
     # debug print
-    # for op in map_operations:
-    #     print(f"Map operation: {op}")
+    for op in map_operations:
+        print(f"Map operation: {op}")
     #  -------------------------------------------------------------
     #  obtain the reducer and aggregator operations
     #  -------------------------------------------------------------
@@ -201,10 +201,10 @@ def trace_graph(traced_model):
                 'kwargs': [node.kwargs if hasattr(node, 'kwargs') else None],
                 'shape': info_nodes[node.name]['shape']
             })
-    # # debug print
-    # for op in reducer_operations:
-    #     print(f"Reducer operation: {op}")
-    # for op in aggregator_operations:
-    #     print(f"Aggregator operation: {op}")
+    # debug print
+    for op in reducer_operations:
+        print(f"Reducer operation: {op}")
+    for op in aggregator_operations:
+        print(f"Aggregator operation: {op}")
 
     return inputs, outputs, selector_register, map_operations, reducer_operations, aggregator_operations
