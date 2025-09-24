@@ -30,8 +30,9 @@ def generate_cpu_code_from_graph(traced_model):
     aggregator_operations = []
     outputs = []
 
-    inputs, outputs, selector_register, map_operations, reducer_operations, aggregator_operations = trace_graph(
-        traced_model)
+    inputs, outputs, selector_register, map_operations, \
+        reducer_operations, aggregator_operations = \
+            trace_graph(traced_model)
 
     # Generate the code
     # Generate the code for input and output and selector
@@ -41,8 +42,9 @@ def generate_cpu_code_from_graph(traced_model):
     output_agent_forloop_code = []
     selector_code = []
 
-    input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, output_agent_forloop_code, selector_code = declarations_gen(
-        inputs, outputs, selector_register)
+    input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, \
+        output_agent_forloop_code, selector_code = \
+            declarations_gen(inputs, outputs, selector_register)
 
     debug_print(input_parameters_code, "input_parameters_code")
     debug_print(input_agent_tenosrs_code, "input_agent_tenosrs_code")
@@ -56,8 +58,10 @@ def generate_cpu_code_from_graph(traced_model):
 
     # Generate the code for reducers and aggregators
 
-    reducer_consume_init_code, reducer_consume_forloop_code, reducer_consume_forloop_add_code, reducer_partial_init_code, reducer_partial_forloop_code, reducer_partial_carry_code, reducer_partial_carry_fixup_code = reducer_gen(
-        reducer_operations)
+    reducer_consume_init_code, reducer_consume_forloop_code, \
+        reducer_consume_forloop_add_code, reducer_partial_init_code, \
+            reducer_partial_forloop_code, reducer_partial_carry_code, \
+                reducer_partial_carry_fixup_code = reducer_gen(reducer_operations)
     debug_print(reducer_consume_init_code, "reducer_consume_init_code")
     debug_print(reducer_consume_forloop_code, "reducer_consume_forloop_code")
     debug_print(reducer_consume_forloop_add_code, "reducer_consume_forloop_add_code")

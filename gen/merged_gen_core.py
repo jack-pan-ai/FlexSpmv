@@ -1,6 +1,6 @@
 import string
 
-from codegen.utils import get_dim_length
+from gen.utils import get_dim_length
 
 # debug print
 def debug_print(code, code_name):
@@ -104,12 +104,14 @@ def declarations_gen(
             selector_code.append(
                 f"  OffsetT {column_indices} = {selector_ptr}[thread_coord.y]; \n")
             selector_code.append(
-                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + {column_indices} * {_dim}); \n")
+                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + \
+                    {column_indices} * {_dim}); \n")
         else:
             # spm loading
             target_ptr = f"{_target}_ptr"
             selector_code.append(
-                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + thread_coord.y * {_dim}); \n")
+                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + \
+                    thread_coord.y * {_dim}); \n")
 
     return input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, \
         output_agent_forloop_code, selector_code
@@ -134,7 +136,8 @@ def map_gen(map_operations):
         _dim = get_dim_length(op['shape'])
         if _op == 'add':
             map_code.append(
-                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + {op['args'][1]}; \n")
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
+                    {op['args'][1]}; \n")
         elif _op == 'norm':
             map_code.append(
                 f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
@@ -174,19 +177,22 @@ def aggregator_gen(aggregator_operations):
         aggregator_diagonal_code_search.append(
             f"    thread_coord.y = tid * items_per_thread; \n")
         aggregator_diagonal_code_search.append(
-            f"    thread_coord_end.y = std::min(tid * items_per_thread + items_per_thread, num_nonzeros); \n")
+            f"    thread_coord_end.y = std::min(tid * items_per_thread + \
+                items_per_thread, num_nonzeros); \n")
 
     for op in aggregator_operations:
         _dim = get_dim_length(op['shape'])
         _name = op['name']
         aggregator_partial_carry_fixup_code.append(
-            f"    ApplyCarryOutFixup<ValueT, OffsetT, {_dim}>(num_threads, {_name}_running_carry_out, output_y_{_name}_ptr); \n")
+            f"    ApplyCarryOutFixup<ValueT, OffsetT, {_dim}>(num_threads, \
+                {_name}_running_carry_out, output_y_{_name}_ptr); \n")
         aggregator_partial_carry_fixup_code.append(
             f"    delete[] {_name}_running_carry_out; \n")
         aggregator_partial_forloop_code.append(
             f"    {_name}_running_carry_out[tid] += {op['args'][0]}; \n")
         aggregator_tenosrs_carry_out_code.append(
-            f"    TensorOutput_{_name}_T* {_name}_running_carry_out=new TensorOutput_{_name}_T[num_threads]; \n")
+            f"    TensorOutput_{_name}_T* {_name}_running_carry_out=new \
+                TensorOutput_{_name}_T[num_threads]; \n")
 
     # # debug
     # debug_print(aggregator_partial_carry_fixup_code, "aggregator_partial_carry_fixup_code")
@@ -234,7 +240,8 @@ def reducer_gen(reducer_operations):
             f"   for (int i = 0; i < {_dim}; i++) \n")
         reducer_consume_forloop_add_code.append(f"   {{ \n")
         reducer_consume_forloop_add_code.append(
-            f"     output_y_{_name}_ptr[thread_coord.x * {_dim} + i] = reducer_{_name}_running_total.values[i]; \n")
+            f"     output_y_{_name}_ptr[thread_coord.x * {_dim} + i] = \
+                reducer_{_name}_running_total.values[i]; \n")
         reducer_consume_forloop_add_code.append(f"   }} \n")
         reducer_partial_init_code.append(
             f"   TensorOutput_{_name}_T {_name}_running_total_partial; \n")
@@ -247,8 +254,10 @@ def reducer_gen(reducer_operations):
         reducer_partial_carry_fixup_code.append(
             f"   ApplyCarryOutFixup<ValueT, OffsetT, {_dim}>( \n")
         reducer_partial_carry_fixup_code.append(
-            f"     num_threads, num_rows, row_carry_out_{_name}, value_carry_out_{_name}, output_y_{_name}_ptr); \n")
+            f"     num_threads, num_rows, row_carry_out_{_name},\
+                 value_carry_out_{_name}, output_y_{_name}_ptr); \n")
 
-    return reducer_consume_init_code, reducer_consume_forloop_code, reducer_consume_forloop_add_code, \
-        reducer_partial_init_code, reducer_partial_forloop_code, reducer_partial_carry_code, \
+    return reducer_consume_init_code, reducer_consume_forloop_code, \
+            reducer_consume_forloop_add_code, reducer_partial_init_code, \
+            reducer_partial_forloop_code, reducer_partial_carry_code, \
             reducer_partial_carry_fixup_code

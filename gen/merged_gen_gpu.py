@@ -127,7 +127,8 @@ def generate_cuda_code_from_graph(traced_model):
                 f"  for (int i = 0; i < {_dim}; i++) \n")
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
-                f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) * {_dim} + i] = {out_name}.values[i]; \n")
+                f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) \
+                    * {_dim} + i] = {out_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # debug print
@@ -158,14 +159,17 @@ def generate_cuda_code_from_graph(traced_model):
             # load the selector register
             current = f"{_name}_ptr_current"
             selector_code.append(
-                f"    ColumnIndicesIteratorT {current} = {_selector_name}_ptr + tile_start_coord.y + nonzero_idx; \n")
+                f"    ColumnIndicesIteratorT {current} = \
+                    {_selector_name}_ptr + tile_start_coord.y + nonzero_idx; \n")
             selector_code.append(
-                f"    TensorInput_{_target}_T {_selector_name}({_target}_ptr + *{current} * {_dim}); \n")
+                f"    TensorInput_{_target}_T \
+                    {_selector_name}({_target}_ptr + *{current} * {_dim}); \n")
         else:
             # spm loading
             current = f"{_name}_ptr_current"
             selector_code.append(
-                f"    VectorValueIteratorT {current} = {_selector_name}_ptr + (tile_start_coord.y + nonzero_idx) * {_dim}; \n")
+                f"    VectorValueIteratorT {current} = {_selector_name}_ptr + \
+                    (tile_start_coord.y + nonzero_idx) * {_dim}; \n")
             selector_code.append(
                 f"    TensorInput_{_target}_T {_selector_name}({_target}_ptr_current); \n")
 
@@ -181,13 +185,15 @@ def generate_cuda_code_from_graph(traced_model):
         _dim = get_dim_length(op['shape'])
         if _op == 'add':
             map_code.append(
-                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + {op['args'][1]}; \n")
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
+                    {op['args'][1]}; \n")
         elif _op == 'norm':
             map_code.append(
                 f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
         elif _op == 'reducer':
             map_code.append(
-                f"    temp_storage.smem_{_name}.s_tile_value_reducer[nonzero_idx] = {op['args'][0]}; \n")
+                f"    temp_storage.smem_{_name}.s_tile_value_reducer[nonzero_idx] = \
+                    {op['args'][0]}; \n")
         elif _op == 'sum':
             map_code.append(f"    {_name} = {_name} + {op['args'][0]}; \n")
         else:
@@ -212,14 +218,16 @@ def generate_cuda_code_from_graph(traced_model):
         if op['op'] == 'sum':
             aggregator_code.append(f"   // blockReduce \n")
             aggregator_code.append(
-                f"   TensorOutput_{_name}_T {_name}_result = BlockReduce_{_name}_T(temp_storage.smem_{_name}).Sum({_name}); \n")
+                f"   TensorOutput_{_name}_T {_name}_result = \
+                    BlockReduce_{_name}_T(temp_storage.smem_{_name}).Sum({_name}); \n")
             aggregator_code.append(f"   if (threadIdx.x == 0) \n")
             aggregator_code.append(f"   {{ \n")
             aggregator_code.append(f"     #pragma unroll \n")
             aggregator_code.append(f"     for (int i = 0; i < {_dim}; i++) \n")
             aggregator_code.append(f"     {{ \n")
             aggregator_code.append(
-                f"       atomicAdd(&spmv_params.output_y_{_name}_ptr[i], {_name}_result.values[i]); \n")
+                f"       atomicAdd(&spmv_params.output_y_{_name}_ptr[i], \
+                    {_name}_result.values[i]); \n")
             aggregator_code.append(f"     }} \n")
             aggregator_code.append(f"   }} \n")
 
@@ -239,25 +247,35 @@ def generate_cuda_code_from_graph(traced_model):
         _name = op['name']
         # generate the SMEM definitions and the reducer code
         reducer_code.append(
-            f"   reduce<{_dim}, BlockScan_{_name}_T, TensorOutput_{_name}_T, ReduceBySegmentOp_{_name}_T>( \n")
+            f"   reduce<{_dim}, BlockScan_{_name}_T, TensorOutput_{_name}_T, \
+                ReduceBySegmentOp_{_name}_T>( \n")
         reducer_code.append(
-            f"                temp_storage.smem_{_name}.s_tile_value_reducer,          ///< [in, code gen] Shared memory array of non-zero values for the merge tile \n")
+            f"                temp_storage.smem_{_name}.s_tile_value_reducer,          \
+                ///< [in, code gen] Shared memory array of non-zero values for the merge tile \n")
         reducer_code.append(
-            f"                temp_storage.s_tile_row_end_offsets,         ///< [in, code gen] Shared memory array of row end offsets for the merge tile \n")
+            f"                temp_storage.s_tile_row_end_offsets,         \
+                ///< [in, code gen] Shared memory array of row end offsets for the merge tile \n")
         reducer_code.append(
-            f"                tile_start_coord,               ///< [in] Starting coordinate of the merge tile \n")
+            f"                tile_start_coord,               \
+                ///< [in] Starting coordinate of the merge tile \n")
         reducer_code.append(
-            f"                tile_end_coord,                 ///< [in] Ending coordinate of the merge tile \n")
+            f"                tile_end_coord,                 \
+                ///< [in] Ending coordinate of the merge tile \n")
         reducer_code.append(
-            f"                thread_start_coord,             ///< [in] Starting coordinate of the thread \n")
+            f"                thread_start_coord,             \
+                ///< [in] Starting coordinate of the thread \n")
         reducer_code.append(
-            f"                tile_num_rows,                  ///< [in] Number of rows in the merge tile \n")
+            f"                tile_num_rows,                  \
+                ///< [in] Number of rows in the merge tile \n")
         reducer_code.append(
-            f"                tile_num_nonzeros,               ///< [in] Number of non-zeros in the merge tile \n")
+            f"                tile_num_nonzeros,               \
+                ///< [in] Number of non-zeros in the merge tile \n")
         reducer_code.append(
-            f"                spmv_params.output_y_{_name}_ptr,                  ///< [out] Output vector y \n")
+            f"                spmv_params.output_y_{_name}_ptr,      \
+                 ///< [out] Output vector y \n")
         reducer_code.append(
-            f"                temp_storage.smem_{_name}.scan               ///< [in] Scan storage for BlockScanT \n")
+            f"                temp_storage.smem_{_name}.scan         \
+                ///< [in] Scan storage for BlockScanT \n")
         reducer_code.append(f"            ); \n")
         reducer_code.append(f"   CTA_SYNC(); \n")
 

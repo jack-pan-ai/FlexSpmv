@@ -13,11 +13,11 @@
 
 #include "merged_spmv.h"
 
-// #define USE_REDUCERS 1
-// #define USE_AGGREGATORS 0
+#define USE_REDUCERS 1
+#define USE_AGGREGATORS 0
 
-#define USE_REDUCERS 0
-#define USE_AGGREGATORS 1
+// #define USE_REDUCERS 0
+// #define USE_AGGREGATORS 1
 
 // --------------------------------------------------------------------
 // Reference CPU implementation Reducers
