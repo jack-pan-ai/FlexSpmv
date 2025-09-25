@@ -1,6 +1,6 @@
 import string
 
-from gen.utils import get_dim_length
+from codegen.utils import get_dim_length
 
 # debug print
 def debug_print(code, code_name):

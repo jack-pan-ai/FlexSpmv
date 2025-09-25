@@ -6,8 +6,8 @@ import easier as esr
 
 from easier.core.runtime.metadata import Role, get_node_meta, StructuredTensorMeta, get_node_view_src
 
-from gen.merged_gen_gpu import generate_cuda_code_from_graph
-from gen.merged_gen_cpu import generate_cpu_code_from_graph
+from codegen.merged_gen_gpu import generate_cuda_code_from_graph
+from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 
 def analyze_tensor_distribution(compiled_module):
     graph = compiled_module.graph

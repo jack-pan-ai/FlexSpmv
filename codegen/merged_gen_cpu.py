@@ -3,7 +3,7 @@ import string
 import easier as esr
 
 from trace.graph_trace import trace_graph
-from gen.merged_gen_core import declarations_gen, reducer_gen, map_gen, aggregator_gen
+from codegen.merged_gen_core import declarations_gen, reducer_gen, map_gen, aggregator_gen
 
 # debug print
 def debug_print(code, code_name):

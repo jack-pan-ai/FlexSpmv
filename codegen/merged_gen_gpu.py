@@ -8,7 +8,7 @@ import easier as esr
 from easier.core.jit import EasierTracer
 import scipy.sparse
 
-from gen.utils import get_dim_length
+from codegen.utils import get_dim_length
 from trace.graph_trace import trace_graph
 
 
