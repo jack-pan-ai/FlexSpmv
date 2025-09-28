@@ -79,7 +79,7 @@ void SpmvGold(
     const OffsetT*                         tensor_v2_idx,
     const OffsetT*                         offset,
     ValueT*                         reducer_1, // [out]
-    ValueT*                         reducer_2, // [out]
+    // ValueT*                         reducer_2, // [out]
     ValueT*                         map_1, // [out]
     ValueT*                         map_2, // [out]
     CommandLineArgs&                 args)
@@ -109,9 +109,9 @@ void SpmvGold(
             ValueT* map_1_row = new ValueT[args.ne1_dim]();
             ValueT* map_2_row = new ValueT[args.ne2_dim]();
             for (int j = 0; j < args.ne1_dim; ++j)
-                map_1_row[j] = v_i[j] + spm_i[j];
+                map_1_row[j] = v_i[j] + v_j[j] + spm_i[j];
             for (int j = 0; j < args.ne2_dim; ++j)
-                map_2_row[j] = v_j[j % args.nv_dim] + spm_j[j];
+                map_2_row[j] = v_i[j % args.nv_dim] + v_j[j % args.nv_dim] + spm_j[j];
             // Update map_1 and map_2
             for (int j = 0; j < args.ne1_dim; ++j)
                 map_1[i * args.ne1_dim + j] = map_1_row[j];
@@ -121,14 +121,14 @@ void SpmvGold(
             // reducer
             for (int j = 0; j < args.ne1_dim; ++j)
                 partial_1[j] += map_1_row[j];
-            for (int j = 0; j < args.ne2_dim; ++j)
-                partial_2[j] += map_2_row[j];
+            // for (int j = 0; j < args.ne2_dim; ++j)
+            //     partial_2[j] += map_2_row[j];
         }
         // reduce
         for (int j = 0; j < args.ne1_dim; ++j)
             reducer_1[row * args.ne1_dim + j] = partial_1[j];
-        for (int j = 0; j < args.ne2_dim; ++j)
-            reducer_2[row * args.ne2_dim + j] = partial_2[j];
+        // for (int j = 0; j < args.ne2_dim; ++j)
+        //     reducer_2[row * args.ne2_dim + j] = partial_2[j];
     }
 }
 
@@ -165,11 +165,11 @@ float LaunchSpMV(
 template <typename ValueT>
 int VerifyDeviceResults(
     ValueT*                         reducer_1_ref,
-    ValueT*                         reducer_2_ref,
+    // ValueT*                         reducer_2_ref,
     ValueT*                         map_1_ref,
     ValueT*                         map_2_ref,
     ValueT*                         reducer_1_gpu,
-    ValueT*                         reducer_2_gpu,
+    // ValueT*                         reducer_2_gpu,
     ValueT*                         map_1_gpu,
     ValueT*                         map_2_gpu,
     bool                            verbose,
@@ -180,13 +180,13 @@ int VerifyDeviceResults(
 
     // Allocate array on host
     ValueT* reducer_1_host = new ValueT[args.num_rows * args.ne1_dim];
-    ValueT* reducer_2_host = new ValueT[args.num_rows * args.ne2_dim];
+    // ValueT* reducer_2_host = new ValueT[args.num_rows * args.ne2_dim];
     ValueT* map_1_host = new ValueT[args.ne * args.ne1_dim];
     ValueT* map_2_host = new ValueT[args.ne * args.ne2_dim];
 
     // Copy data back
     cudaMemcpy(reducer_1_host, reducer_1_gpu, sizeof(ValueT) * args.num_rows * args.ne1_dim, cudaMemcpyDeviceToHost);
-    cudaMemcpy(reducer_2_host, reducer_2_gpu, sizeof(ValueT) * args.num_rows * args.ne2_dim, cudaMemcpyDeviceToHost);
+    // cudaMemcpy(reducer_2_host, reducer_2_gpu, sizeof(ValueT) * args.num_rows * args.ne2_dim, cudaMemcpyDeviceToHost);
     cudaMemcpy(map_1_host, map_1_gpu, sizeof(ValueT) * args.ne * args.ne1_dim, cudaMemcpyDeviceToHost);
     cudaMemcpy(map_2_host, map_2_gpu, sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyDeviceToHost);
 
@@ -204,7 +204,7 @@ int VerifyDeviceResults(
                 printf("%f, ", reducer_1_host[i * args.ne1_dim + j]);
             printf("\n");
         }
-        printf("\nreducer_2:\n");
+        /*printf("\nreducer_2:\n");
         for (int i = 0; i < args.num_rows; ++i)
         {
             printf("row %d: ", i);
@@ -214,7 +214,7 @@ int VerifyDeviceResults(
             for (int j = 0; j < args.ne2_dim; ++j)
                 printf("%f, ", reducer_2_host[i * args.ne2_dim + j]);
             printf("\n");
-        }
+        }*/
         printf("\nmap_1:\n");
         for (int i = 0; i < args.ne; ++i)
         {
@@ -246,11 +246,11 @@ int VerifyDeviceResults(
             printf("reducer_1_host[%d] = %f, reducer_1_ref[%d] = %f\n", i, reducer_1_host[i], i, reducer_1_ref[i]);
             return 1;
         }
-    for (int i = 0; i < args.num_rows * args.ne2_dim; ++i)
+    /*for (int i = 0; i < args.num_rows * args.ne2_dim; ++i)
         if (abs(reducer_2_host[i] - reducer_2_ref[i]) > epsilon) {
             printf("reducer_2_host[%d] = %f, reducer_2_ref[%d] = %f\n", i, reducer_2_host[i], i, reducer_2_ref[i]);
             return 1;
-        }
+        }*/
     for (int i = 0; i < args.ne * args.ne1_dim; ++i)
         if (abs(map_1_host[i] - map_1_ref[i]) > epsilon) {
             printf("map_1_host[%d] = %f, map_1_ref[%d] = %f\n", i, map_1_host[i], i, map_1_ref[i]);
@@ -273,7 +273,7 @@ template <
     typename OffsetT>
 float TestGpuMergeCsrmv_from_scratch(
     ValueT*                         reducer_1,
-    ValueT*                         reducer_2,
+    // ValueT*                         reducer_2,
     ValueT*                         map_1,
     ValueT*                         map_2,
     FlexParams<ValueT, OffsetT>&    params,
@@ -304,9 +304,9 @@ float TestGpuMergeCsrmv_from_scratch(
     if (!g_quiet)
     {
         int compare = VerifyDeviceResults(
-            reducer_1, reducer_2, 
+            reducer_1, 
             map_1, map_2, 
-            params.output_y_y_reducer_1_ptr, params.output_y_y_reducer_2_ptr, 
+            params.output_y_reducer_1_ptr, 
             params.output_y_y_add_1_ptr, params.output_y_y_add_2_ptr, 
             g_verbose,
             args
@@ -478,7 +478,7 @@ void RunTest(
 
     // Output vector
     ValueT* reducer_1    = new ValueT[args.num_rows * args.ne1_dim];
-    ValueT* reducer_2    = new ValueT[args.num_rows * args.ne2_dim];
+    // ValueT* reducer_2    = new ValueT[args.num_rows * args.ne2_dim];
     ValueT* map_1    = new ValueT[args.ne * args.ne1_dim];
     ValueT* map_2    = new ValueT[args.ne * args.ne2_dim];
 
@@ -491,7 +491,7 @@ void RunTest(
         tensor_v2_idx,
         offset,
         reducer_1,
-        reducer_2,
+        // reducer_2,
         map_1,
         map_2,
         args
@@ -518,8 +518,8 @@ void RunTest(
 
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_reducer_1_ptr,       sizeof(ValueT) * args.num_rows * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_reducer_2_ptr,       sizeof(ValueT) * args.num_rows * args.ne2_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_reducer_1_ptr,       sizeof(ValueT) * args.num_rows * args.ne1_dim));
+    // CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_reducer_2_ptr,       sizeof(ValueT) * args.num_rows * args.ne2_dim));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.d_row_end_offsets,  sizeof(OffsetT) * (args.num_rows + 1)));
     params.num_rows         = args.num_rows;
     params.num_cols         = args.num_cols;
@@ -537,7 +537,7 @@ void RunTest(
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
     avg_ms = TestGpuMergeCsrmv_from_scratch(
-        reducer_1, reducer_2, map_1, map_2, 
+        reducer_1, map_1, map_2, 
         params, timing_iterations, 
         setup_ms, args);
     DisplayPerf<ValueT, OffsetT>(device_giga_bandwidth, setup_ms, avg_ms, args);    
@@ -550,8 +550,8 @@ void RunTest(
     if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
     if (params.output_y_y_add_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_1_ptr));
     if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
-    if (params.output_y_y_reducer_1_ptr)       CubDebugExit(g_allocator.DeviceFree(params.output_y_y_reducer_1_ptr));
-    if (params.output_y_y_reducer_2_ptr)       CubDebugExit(g_allocator.DeviceFree(params.output_y_y_reducer_2_ptr));
+    if (params.output_y_reducer_1_ptr)       CubDebugExit(g_allocator.DeviceFree(params.output_y_reducer_1_ptr));
+    // if (params.output_y_y_reducer_2_ptr)       CubDebugExit(g_allocator.DeviceFree(params.output_y_y_reducer_2_ptr));
     if (params.d_row_end_offsets)   CubDebugExit(g_allocator.DeviceFree(params.d_row_end_offsets));
 
     if (tensor_v)                   delete[] tensor_v;
@@ -561,7 +561,7 @@ void RunTest(
     if (tensor_v2_idx)              delete[] tensor_v2_idx;
     if (offset)                     delete[] offset;
     if (reducer_1)                  delete[] reducer_1;
-    if (reducer_2)                  delete[] reducer_2;
+    // if (reducer_2)                  delete[] reducer_2;
     if (map_1)                      delete[] map_1;
     if (map_2)                      delete[] map_2;
 
@@ -625,6 +625,11 @@ int main(int argc, char **argv)
     args.ne = 123134;
     args.num_rows = 12314;
     args.num_cols = 1543;
+        // tesnor info
+        // args.nv = 4;
+        // args.ne = 12;
+        // args.num_rows = 5;
+        // args.num_cols = 4;
     args.nv_dim = 2;
     args.ne1_dim = 2;
     args.ne2_dim = 6;

@@ -96,7 +96,7 @@ void OmpMergeSystem(
     ${input_parameters_code} int num_rows, int num_nonzeros) {
   // [code generation]
   // input and output tensors types
-  ${input_agent_tenosrs_code} ${output_agent_tenosrs_code}
+  ${input_agent_tenosrs_code} ${map_agent_tenosrs_code} ${output_agent_tenosrs_code}
 
 #pragma omp parallel for schedule(static) num_threads(num_threads)
   for (int tid = 0; tid < num_threads; tid++) {

@@ -77,11 +77,11 @@ template <
 void SpmvGold(
     const ValueT*                         tensor_v, 
     const ValueT*                         tensor_spm1,
-    const ValueT*                         tensor_spm2,
+    // const ValueT*                         tensor_spm2,
     const OffsetT*                         tensor_v1_idx,
     const OffsetT*                         tensor_v2_idx,
     ValueT*                         map_1, // [out]
-    ValueT*                         map_2, // [out]
+    // ValueT*                         map_2, // [out]
     CommandLineArgs&                 args)
 {
     for (OffsetT row = 0; row < args.ne; ++row)
@@ -92,13 +92,13 @@ void SpmvGold(
         // const ValueT* v_i = &tensor_v[selector_i * args.nv_dim];
         // const ValueT* v_j = &tensor_v[selector_j * args.nv_dim];
         const ValueT* spm_i = &tensor_spm1[row * args.ne1_dim];
-        const ValueT* spm_j = &tensor_spm2[row * args.ne2_dim];
+        // const ValueT* spm_j = &tensor_spm2[row * args.ne2_dim];
 
         // map
         for (int j = 0; j < args.ne1_dim; ++j)
             map_1[row * args.ne1_dim + j] = spm_i[j] + spm_i[j];
-        for (int j = 0; j < args.ne2_dim; ++j)
-            map_2[row * args.ne2_dim + j] = spm_j[j] + spm_j[j];
+        // for (int j = 0; j < args.ne2_dim; ++j)
+            // map_2[row * args.ne2_dim + j] = spm_j[j] + spm_j[j];
     }
 }
 
@@ -135,9 +135,9 @@ float LaunchSpMV(
 template <typename ValueT>
 int VerifyDeviceResults(
     ValueT*                         map_1_ref,
-    ValueT*                         map_2_ref,
+    // ValueT*                         map_2_ref,
     ValueT*                         map_1_gpu,
-    ValueT*                         map_2_gpu,
+    // ValueT*                         map_2_gpu,
     bool                            verbose,
     CommandLineArgs&                args)
 {
@@ -146,11 +146,11 @@ int VerifyDeviceResults(
 
     // Allocate array on host
     ValueT* map_1_host = new ValueT[args.ne * args.ne1_dim];
-    ValueT* map_2_host = new ValueT[args.ne * args.ne2_dim];
+    // ValueT* map_2_host = new ValueT[args.ne * args.ne2_dim];
 
     // Copy data back
     cudaMemcpy(map_1_host, map_1_gpu, sizeof(ValueT) * args.ne * args.ne1_dim, cudaMemcpyDeviceToHost);
-    cudaMemcpy(map_2_host, map_2_gpu, sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyDeviceToHost);
+    // cudaMemcpy(map_2_host, map_2_gpu, sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyDeviceToHost);
 
     if (verbose)
     {
@@ -165,7 +165,7 @@ int VerifyDeviceResults(
             printf("\n");
         }
 
-        printf("map_2 (ref / computed):\n");
+        /*printf("map_2 (ref / computed):\n");
         for (int i = 0; i < args.ne; ++i)
         {
             for (int j = 0; j < args.ne2_dim; ++j)
@@ -174,7 +174,7 @@ int VerifyDeviceResults(
             for (int j = 0; j < args.ne2_dim; ++j)
                 printf("%f, ", map_2_host[i * args.ne2_dim + j]);
             printf("\n");
-        }
+        }*/
     }
 
     // Compare
@@ -183,11 +183,11 @@ int VerifyDeviceResults(
             printf("map_1_host[%d] = %f, map_1_ref[%d] = %f\n", i, map_1_host[i], i, map_1_ref[i]);
             return 1;
         }
-    for (int i = 0; i < args.ne * args.ne2_dim; ++i)
+    /*for (int i = 0; i < args.ne * args.ne2_dim; ++i)
         if (abs(map_2_host[i] - map_2_ref[i]) > epsilon) {
             printf("map_2_host[%d] = %f, map_2_ref[%d] = %f\n", i, map_2_host[i], i, map_2_ref[i]);
             return 1;
-        }
+        }*/
 
     return 0;
 }
@@ -200,7 +200,7 @@ template <
     typename OffsetT>
 float TestGpuMergeCsrmv_from_scratch(
     ValueT*                         map_1,
-    ValueT*                         map_2,
+    // ValueT*                         map_2,
     FlexParams<ValueT, OffsetT>&    params,
     int                             timing_iterations,
     float                           &setup_ms,
@@ -229,8 +229,8 @@ float TestGpuMergeCsrmv_from_scratch(
     if (!g_quiet)
     {
         int compare = VerifyDeviceResults(
-            map_1, map_2, 
-            params.output_y_y_add_1_ptr, params.output_y_y_add_2_ptr, 
+            map_1, 
+            params.output_y_y_add_1_ptr,
             g_verbose,
             args
         );
@@ -316,7 +316,7 @@ void RunTest(
     // Input tensor
     ValueT* tensor_v        = new ValueT[args.nv * args.nv_dim];
     ValueT* tensor_spm1     = new ValueT[args.ne * args.ne1_dim];
-    ValueT* tensor_spm2     = new ValueT[args.ne * args.ne2_dim];
+    // ValueT* tensor_spm2     = new ValueT[args.ne * args.ne2_dim];
     OffsetT* tensor_v1_idx  = new OffsetT[args.ne];
     OffsetT* tensor_v2_idx  = new OffsetT[args.ne];
 
@@ -325,8 +325,8 @@ void RunTest(
         tensor_v[i] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
     for (int i = 0; i < args.ne * args.ne1_dim; ++i)
         tensor_spm1[i] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
-    for (int i = 0; i < args.ne * args.ne2_dim; ++i)
-        tensor_spm2[i] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
+    // for (int i = 0; i < args.ne * args.ne2_dim; ++i)
+        // tensor_spm2[i] = static_cast<ValueT>(dis(gen) % 1000) / 1000.0f;
     for (int i = 0; i < args.ne; ++i)
         tensor_v1_idx[i] = static_cast<OffsetT>(dis(gen) % args.nv);
     for (int i = 0; i < args.ne; ++i)
@@ -363,29 +363,29 @@ void RunTest(
             printf("|");
         }
         printf("\n");
-        printf("tensor_spm2: ");
+        /*printf("tensor_spm2: ");
         for (int i = 0; i < args.ne; ++i) {
             for (int j = 0; j < args.ne2_dim; ++j) {
                 printf("%f ", tensor_spm2[i * args.ne2_dim + j]);
             }
             printf("|");
         }
-        printf("\n");
+        printf("\n");*/
     }
 
     // Output vector
     ValueT* map_1    = new ValueT[args.ne * args.ne1_dim];
-    ValueT* map_2    = new ValueT[args.ne * args.ne2_dim];
+    // ValueT* map_2    = new ValueT[args.ne * args.ne2_dim];
 
     // Compute reference answer
     SpmvGold(
         tensor_v,
         tensor_spm1,
-        tensor_spm2,
+        // tensor_spm2,
         tensor_v1_idx,
         tensor_v2_idx,
         map_1,
-        map_2,
+        // map_2,
         args
     );
     
@@ -403,45 +403,45 @@ void RunTest(
     FlexParams<ValueT, OffsetT> params;
 
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_1_ptr, sizeof(ValueT) * args.ne * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_2_ptr, sizeof(ValueT) * args.ne * args.ne2_dim));
+    // CubDebugExit(g_allocator.DeviceAllocate((void **) &params.spm_2_ptr, sizeof(ValueT) * args.ne * args.ne2_dim));
     
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
+    // CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
     params.num_rows         = args.num_rows;
     params.num_cols         = args.num_cols;
     params.num_nonzeros     = args.ne;
 
     CubDebugExit(cudaMemcpy((void*) params.spm_1_ptr,            (void*) tensor_spm1,          sizeof(ValueT) * args.ne * args.ne1_dim, cudaMemcpyHostToDevice));
-    CubDebugExit(cudaMemcpy((void*) params.spm_2_ptr,            (void*) tensor_spm2,          sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyHostToDevice));
+    // CubDebugExit(cudaMemcpy((void*) params.spm_2_ptr,            (void*) tensor_spm2,          sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyHostToDevice));
 
 
     // Merge-based from scratch
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
     avg_ms = TestGpuMergeCsrmv_from_scratch(
-        map_1, map_2, 
+        map_1, 
         params, timing_iterations, 
         setup_ms, args);
     DisplayPerf<ValueT, OffsetT>(device_giga_bandwidth, setup_ms, avg_ms, args);    
     
     // Cleanup
     if (params.spm_1_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_1_ptr));
-    if (params.spm_2_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_2_ptr));
+    // if (params.spm_2_ptr)           CubDebugExit(g_allocator.DeviceFree(params.spm_2_ptr));
     // if (params.selector_1_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_1_ptr));
     // if (params.selector_2_ptr)      CubDebugExit(g_allocator.DeviceFree(params.selector_2_ptr));
     // if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
     if (params.output_y_y_add_1_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_1_ptr));
-    if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
+    // if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
     // if (params.output_y_sum_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_1_ptr));
     // if (params.output_y_sum_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_2_ptr));
 
     if (tensor_v)                   delete[] tensor_v;
     if (tensor_spm1)                delete[] tensor_spm1;
-    if (tensor_spm2)                delete[] tensor_spm2;
+    // if (tensor_spm2)                delete[] tensor_spm2;
     if (tensor_v1_idx)              delete[] tensor_v1_idx;
     if (tensor_v2_idx)              delete[] tensor_v2_idx;
     if (map_1)                      delete[] map_1;
-    if (map_2)                      delete[] map_2;
+    // if (map_2)                      delete[] map_2;
 
     // Check for any pending CUDA errors before final synchronization
     cudaError_t error = cudaGetLastError();

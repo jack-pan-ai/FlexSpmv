@@ -4,9 +4,28 @@ import easier as esr
 from easier.core.runtime.metadata import get_node_meta
 from easier import Reducer, Selector
 from easier.core.runtime.metadata import Role
+from easier.core.passes.dataflow_fusion.node_group import \
+    NodeGroup, get_node_group
+
+def get_node_info(node, node_meta_dict, node_placeholder_meta_dict):
+    '''
+    Get the node information
+    '''
+    op = node.op
+    name = node.name
+    target = node.target
+    args = node.args
+    # the first dimension is the batch size
+    if node.op == 'placeholder':
+        # metadata of placeholder is saved in the traced_model
+        node_shape = get_node_meta(node_placeholder_meta_dict[name]).shape[1:]
+    else:
+        # metadats of other nodes is saved in the node_group
+        node_shape = get_node_meta(node_meta_dict[name]).shape[1:]
+    return node_shape, op, name, target, args
 
 # Part 2: Generate CUDA code from the graph
-def trace_graph(traced_model):
+def trace_graph(submodule, traced_model):
 
     # Analyze the graph and extract operations
     inputs = []
@@ -17,9 +36,33 @@ def trace_graph(traced_model):
     aggregator_operations = []
     outputs = []
 
-    # obtain the traced nodes list
-    traced_nodes = list(traced_model.graph.nodes)
+    # obtain the traced nodes list (exclude the output node)
+    traced_nodes = list(submodule.graph.nodes)
     
+    # dict here only provide the metadata info
+    node_meta_dict = {node.name: node for node in get_node_group(submodule).nodes}
+    # the placeholder nodes here will contain the reducer nodes (which is not used)
+    node_placeholder_meta_dict = {node.name: node \
+        for node in traced_model.jit_engine.graph.nodes if node.op == 'get_attr'}
+    # prepare the selector and selector tensor list
+    selector_set = set([node.name for node in get_node_group(submodule).nodes \
+        if node.op == 'call_module' and node.meta['nn_module_stack'][node.target][1] == Selector])
+    selector_tensor_set = set([node.args[0].name for node in get_node_group(submodule).nodes \
+        if node.name in selector_set])
+    print("selector_set: ", selector_set)
+    print("selector_tensor_set: ", selector_tensor_set)
+    print("node_placeholder_meta_dict: ", node_placeholder_meta_dict)
+    print("node_meta_dict: ", node_meta_dict)
+    
+    # for node in traced_nodes:
+    #     if node.op == 'call_module':
+    #         print(node_meta_dict[node.name].meta["nn_module_stack"][node.target][1] == Selector)
+    
+    # for node in node_group.nodes:
+    #     print(node.op)
+    #     # print(node.meta['nn_module_stack'])
+    #     print(get_node_meta(node))
+    # # print(node_group)
 
 #  -------------------------------------------------------------
 #  Analyze the graph and extract operations, 
@@ -30,43 +73,33 @@ def trace_graph(traced_model):
 #  -------------------------------------------------------------
 
 
-    # three get_attr involved: 1) egde tensor; 2) vertex tensor;
-    #  3) output; here we need to tell them apart
-    selector_vertices = set()
+    # output in the fused submodule has two patterns:
+    # 1) outputs 2) setitem 
     output_nodes = set()
     for node in traced_nodes:
-        # trace the selector input
-        if node.op == 'call_module':
-            _class_name = node.meta['nn_module_stack'][node.target][1]
-            print(_class_name)
-            print(_class_name == Selector)
-            if _class_name == Selector:
-                selector_vertices.add(
-                    node.args[0].name
-                )
         # trace the output node
         if node.op == 'call_function' and "setitem" in str(node.target):
             output_nodes.add(
-                node.args[0].name
+                (node.args[0].name)
             )
+        elif node.op == 'output':
+            if isinstance(node.args[0], list):
+                output_nodes.update([n.name if hasattr(n, 'name') \
+                    else n for n in node.args[0]])
+            else:
+                output_nodes.add(node.args[0].name)
     # debug print
-    print(selector_vertices)
-    print(output_nodes)
+    print("output_nodes: ", output_nodes)
+    # exclude the output node
+    traced_nodes = traced_nodes[:len(traced_nodes) - 1]
 
     #  -------------------------------------------------------------
     #  obtain the input and output, and the dimension of the input and output
     #  -------------------------------------------------------------
-    _reducer_set = set()
     for node in traced_nodes:
-        # obtain the shape of the node
-        # the first dimension is the batch size
-        node_shape = get_node_meta(node).shape[1:]
-        op = node.op
-        name = node.name
-        target = node.target
-        args = node.args
-        
-        if op == 'get_attr' and name not in output_nodes:
+        node_shape, op, name, target, args = \
+            get_node_info(node, node_meta_dict, node_placeholder_meta_dict)
+        if op == 'placeholder' and name not in output_nodes:
             # 1) obtain the input information, vertex and edge tensor
             inputs.append(
                 {
@@ -76,7 +109,8 @@ def trace_graph(traced_model):
                     "shape": node_shape,
                 }
             )
-        elif op == 'call_module' and node.meta['nn_module_stack'][target][1] == Selector:
+        elif op == 'call_module' and \
+             node_meta_dict[name].meta["nn_module_stack"][target][1] == Selector:
             # 2) obtain the selector index
             inputs.append(
                 {
@@ -86,23 +120,34 @@ def trace_graph(traced_model):
                     "shape": node_shape,
                 }
             )
-        elif op == 'call_module' and node.meta['nn_module_stack'][target][1] == Reducer:
-            _reducer_set.add(name)
-        elif op == 'call_function' and "setitem" in str(target):
-            # 3) obtain the output information
-            # 3.1) Aggregator: function sum is tag name for code generation
-            if get_node_meta(node).role == Role.REPLICATED:
-                target = 'function sum'
-                node_shape = get_node_meta(node).shape
-            # 3.2) Reducer: the function reducer is tag name for code generation
-            _reducer_tag_name = str(args[-1])
-            if _reducer_tag_name in _reducer_set:
-                target = 'function reducer'
-            
+        elif op == 'call_module' and \
+             node_meta_dict[name].meta["nn_module_stack"][target][1] == Reducer:
             # save the output information
             outputs.append(
                 {
-                    "name": args[0].name,
+                    "name": name,
+                    "target": target,
+                    "dtype": "ValueT",
+                    "shape": node_shape,
+                }
+            )
+        elif op == 'call_function' and "setitem" in str(target):
+            # 3) obtain the output information 
+            # save the output information
+            outputs.append(
+                {
+                    "name": args[0],
+                    "target": args[-1],
+                    "dtype": "ValueT",
+                    "shape": node_shape,
+                }
+            )
+        elif op == 'call_function' and "sum" in str(target):
+            # 3.1) Aggregator: function sum is tag name for code generation
+            target = 'function sum'
+            outputs.append(
+                {
+                    "name": name,
                     "target": target,
                     "dtype": "ValueT",
                     "shape": node_shape,
@@ -122,15 +167,12 @@ def trace_graph(traced_model):
     
     for node in traced_nodes:
         
-        node_shape = get_node_meta(node).shape[1:]
-        op = node.op
-        name = node.name
-        target = node.target
-        args = node.args
+        node_shape, op, name, target, args = \
+            get_node_info(node, node_meta_dict, node_placeholder_meta_dict)
 
         # edge tensor and vertex tensor traced from the graph
         # 1) edge tensor
-        if op == 'get_attr' and name not in selector_vertices \
+        if op == 'placeholder' and name not in selector_tensor_set \
             and name not in output_nodes:
             selector_register.append(
                     {
@@ -143,11 +185,11 @@ def trace_graph(traced_model):
                     }
                 )
         # 2) vertex tensor
-        if op == 'call_module' and node.meta['nn_module_stack'][target][1] == Selector:
+        if op == 'call_module' and name in selector_set:
             selector_register.append(
                     {
                         "name": name,
-                        "target": args[0].target,
+                        "target": args[0].name,
                         "dtype": "TensorKeyT",
                         "selector": 1,  # vertex tensor
                         "selector_name": target,
@@ -161,23 +203,20 @@ def trace_graph(traced_model):
     #  -------------------------------------------------------------
     #  obtain the map operations
     #  -------------------------------------------------------------
-    traced_nodes_iter = iter(traced_nodes) # used for the aggregator only
-    for node in traced_nodes_iter:
+    for node in traced_nodes:
 
-        node_shape = get_node_meta(node).shape[1:]
-        op = node.op
-        name = node.name
-        target = node.target
-        args = node.args
+        node_shape, op, name, target, args = \
+            get_node_info(node, node_meta_dict, node_placeholder_meta_dict)
 
-        if op == 'call_module' and node.meta["nn_module_stack"][node.target][1] == Reducer:
+        if op == 'call_module' and name not in selector_set:
             # obtain reducers
             map_operations.append({
-                    'name': node.name,
+                    'name': name,
                     'target': target,
                     'op': 'reducer', # a tag
                     'shape': node_shape,
-                    'args': [arg.name if hasattr(arg, 'name') else arg for arg in node.args]
+                    'args': [arg.name if hasattr(arg, 'name') \
+                        else arg for arg in args]
                 })
         elif op == 'call_function' or op == 'call_method':
             target_name = str(target).split('.')[-1]
@@ -193,24 +232,12 @@ def trace_graph(traced_model):
                 target_name = 'truediv'
             elif 'norm' in str(target):
                 target_name = 'norm'
+                # [TODO]
             elif 'sum' in str(target):
                 # aggregator
                 target_name = 'sum'
-                args = args
-                op = 'sum'
-                for _ in range(3):
-                    # skip the next 3 nodes which is used for communications
-                    next(traced_nodes_iter, None)
-                _node_agg = next(traced_nodes_iter, None)
-                name = str(_node_agg.args[0])
             elif 'setitem' in str(target):
-                # check the output name, replace it
-                output_name_replace = str(args[0].name)
-                output_name_original = str(args[-1].name)
-                for op in map_operations:
-                    if op['name'] == output_name_original:
-                        op['name'] = output_name_replace
-                        break
+                # intermediate map output
                 continue
             else:
                 # error
@@ -231,16 +258,12 @@ def trace_graph(traced_model):
     #  -------------------------------------------------------------
     #  obtain the reducer and aggregator operations
     #  -------------------------------------------------------------
-    traced_nodes_iter = iter(traced_nodes) # used for the aggregator only
-    for node in traced_nodes_iter:
+    for node in traced_nodes:
 
-        node_shape = get_node_meta(node).shape[1:]
-        op = node.op
-        name = node.name
-        target = node.target
-        args = node.args
+        node_shape, op, name, target, args = \
+            get_node_info(node, node_meta_dict, node_placeholder_meta_dict)
 
-        if op == 'call_module' and node.meta["nn_module_stack"][node.target][1] == Reducer:
+        if op == 'call_module' and name not in selector_set:
             # 1) obtain the reducer
             op_name = 'reducer'
             reducer_operations.append({
@@ -252,26 +275,13 @@ def trace_graph(traced_model):
         elif 'sum' in str(target):
             # 2) obtain the aggregator
             op_name = 'sum'
-            for _ in range(3):
-                # skip the next 3 nodes which is used for communications
-                next(traced_nodes_iter, None)
-            _node_agg = next(traced_nodes_iter, None)
-            name = str(_node_agg.args[0])
-
+            
             aggregator_operations.append({
                 'name': name,
                 'op': op_name,
                 'shape': node_shape,
                 'args': [arg.name if hasattr(arg, 'name') else arg for arg in args]
             })
-        # replace the output name
-        if op == 'call_function' and "setitem" in str(target):
-            output_name_replace = str(args[0].name)
-            output_name_original = str(args[-1].name)
-            for op in reducer_operations:
-                if op['name'] == output_name_original:
-                    op['name'] = output_name_replace
-                    break
             
     # debug print
     for op in reducer_operations:

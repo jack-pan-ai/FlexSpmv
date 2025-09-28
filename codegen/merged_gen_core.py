@@ -59,6 +59,7 @@ def declarations_gen(
     # output code in the declarations utils file
     for out in outputs:
         _name = out['name']
+        target_name = out['target']
         input_parameters_code.append(
             f"  ValueT *__restrict output_y_{_name}_ptr, \n")
 
@@ -76,16 +77,12 @@ def declarations_gen(
             output_agent_tenosrs_code.append(
                 f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{_name}_T; \n")
         else:
-            # used for map output
-            output_agent_tenosrs_code.append(
-                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{_name}_T; \n")
-
             # map consume the main part
             output_agent_forloop_code.append(
                 f"  for (int i = 0; i < {_dim}; i++) \n")
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
-                f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {_name}.values[i]; \n")
+                f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {target_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # Generate the selector register code
@@ -113,7 +110,8 @@ def declarations_gen(
                 f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + \
                     thread_coord.y * {_dim}); \n")
 
-    return input_parameters_code, input_agent_tenosrs_code, output_agent_tenosrs_code, \
+    return input_parameters_code, input_agent_tenosrs_code, \
+        output_agent_tenosrs_code, \
         output_agent_forloop_code, selector_code
 
 
@@ -127,13 +125,20 @@ def map_gen(map_operations):
 
     Returns:
         map_code: list of code for the map
+        map_agent_tenosrs_code: list of code for the map agent tenosrs
     """
     map_code = []
+    map_agent_tenosrs_code = []
 
     for op in map_operations:
         _name = op['name']
         _op = op['op']
         _dim = get_dim_length(op['shape'])
+        # add the declarations for the map agent tenosrs
+        if _op != 'reducer' and 'sum' not in _op:
+            map_agent_tenosrs_code.append(
+                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{_name}_T; \n")
+
         if _op == 'add':
             map_code.append(
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
@@ -149,7 +154,7 @@ def map_gen(map_operations):
             # error
             raise ValueError(f"Operation {_op} not supported")
 
-    return map_code
+    return map_code, map_agent_tenosrs_code
 
 
 def aggregator_gen(aggregator_operations):

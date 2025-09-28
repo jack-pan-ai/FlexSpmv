@@ -13,11 +13,12 @@ def debug_print(code, code_name):
     else:
         print(f"{code_name} is empty")
 
-def generate_cpu_code_from_graph(traced_model):
+def generate_cpu_code_from_graph(submodule, traced_model):
     """
     Generate CPU code from the graph
 
     Args:
+        submodule: the submodule -> GraphModule type
         traced_model: the traced model
     """
 
@@ -32,7 +33,7 @@ def generate_cpu_code_from_graph(traced_model):
 
     inputs, outputs, selector_register, map_operations, \
         reducer_operations, aggregator_operations = \
-            trace_graph(traced_model)
+            trace_graph(submodule, traced_model)
 
     # Generate the code
     # Generate the code for input and output and selector
@@ -53,8 +54,9 @@ def generate_cpu_code_from_graph(traced_model):
     debug_print(selector_code, "selector_code")
 
     # Generate the code for map
-    map_code = map_gen(map_operations)
-    # debug_print(map_code, "map_code")
+    map_code, map_agent_tenosrs_code = map_gen(map_operations)
+    debug_print(map_code, "map_code")
+    debug_print(map_agent_tenosrs_code, "map_agent_tenosrs_code")
 
     # Generate the code for reducers and aggregators
 
@@ -97,6 +99,7 @@ def generate_cpu_code_from_graph(traced_model):
     output_agent_forloop_str = trans_str(output_agent_forloop_code)
     selector_str = trans_str(selector_code)
     map_str = trans_str(map_code)
+    map_agent_tenosrs_str = trans_str(map_agent_tenosrs_code)
     reducer_consume_init_str = trans_str(reducer_consume_init_code)
     reducer_consume_forloop_str = trans_str(reducer_consume_forloop_code)
     reducer_consume_forloop_add_str = trans_str(
@@ -121,6 +124,7 @@ def generate_cpu_code_from_graph(traced_model):
         output_agent_forloop_code=output_agent_forloop_str,
         selector_code=selector_str,
         map_code=map_str,
+        map_agent_tenosrs_code=map_agent_tenosrs_str,
         reducer_consume_init_code=reducer_consume_init_str,
         reducer_consume_forloop_code=reducer_consume_forloop_str,
         reducer_consume_forloop_add_code=reducer_consume_forloop_add_str,

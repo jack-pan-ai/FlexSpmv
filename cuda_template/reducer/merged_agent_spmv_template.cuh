@@ -123,6 +123,8 @@ namespace merged
         // Tensor and TensorKey for input vector x
         ${input_agent_tenosrs_code}
 
+        // Tensor and TensorKey for map 
+        ${map_agent_tenosrs_code}
         // Tensor and TensorKey for reducers 
         ${output_agent_tenosrs_code}
 

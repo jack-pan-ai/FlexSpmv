@@ -12,12 +12,13 @@ from codegen.utils import get_dim_length
 from trace.graph_trace import trace_graph
 
 
-def generate_cuda_code_from_graph(traced_model):
+def generate_cuda_code_from_graph(submodule, traced_model):
     """
     Generate CUDA code from the graph
 
     Args:
-        traced_model: the traced model, here is jit engine
+        submodule: the submodule -> GraphModule type
+        traced_model: the traced model FullGraph
     """
 
     # Analyze the graph and extract operations
@@ -33,7 +34,7 @@ def generate_cuda_code_from_graph(traced_model):
     # 1) input and output, 2) selector, 
     # 3) map 4) reducer and aggregator
     inputs, outputs, selector_register, map_operations, \
-        reducer_operations, aggregator_operations = trace_graph(traced_model)
+        reducer_operations, aggregator_operations = trace_graph(submodule, traced_model)
 
     # Generate the code
     # Generate the input/output code
@@ -73,6 +74,7 @@ def generate_cuda_code_from_graph(traced_model):
     # output code in the declarations utils file
     for out in outputs:
         out_name = out['name']
+        target_name = out['target']
         input_declarations_utils_code.append(
             f"  ValueT *output_y_{out_name}_ptr; \n")
         _dim = get_dim_length(out['shape'])
@@ -118,9 +120,9 @@ def generate_cuda_code_from_graph(traced_model):
             output_agent_SMEM_code.append(
                 f"               typename BlockReduce_{_name}_T::TempStorage smem_{_name}; \n")
         else:
-            # used for map output
-            output_agent_tenosrs_code.append(
-                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out_name}_T; \n")
+            # # used for map output
+            # output_agent_tenosrs_code.append(
+            #     f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{out_name}_T; \n")
             # map inside the forloop
             output_agent_forloop_code.append(f"  #pragma unroll \n")
             output_agent_forloop_code.append(
@@ -128,7 +130,7 @@ def generate_cuda_code_from_graph(traced_model):
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
                 f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) \
-                    * {_dim} + i] = {out_name}.values[i]; \n")
+                    * {_dim} + i] = {target_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # debug print
@@ -179,10 +181,17 @@ def generate_cuda_code_from_graph(traced_model):
 
     # Generate the CUDA kernel code (map operations)
     map_code = []
+    map_agent_tenosrs_code = []
     for op in map_operations:
         _name = op['name']
         _op = op['op']
         _dim = get_dim_length(op['shape'])
+
+        # add the declarations for the map agent tenosrs
+        if _op != 'reducer' and 'sum' not in _op:
+            map_agent_tenosrs_code.append(
+                f"  typedef Tensor<ValueT, {_dim}> TensorOutput_{_name}_T; \n")
+
         if _op == 'add':
             map_code.append(
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
@@ -203,6 +212,8 @@ def generate_cuda_code_from_graph(traced_model):
     # # Debug print to check kernel operations
     for op in map_code:
         print("Map code: ", op)
+    for op in map_agent_tenosrs_code:
+        print("Map agent tenosrs code: ", op)
 
     # Generate the aggregator code
     aggregator_code = []
@@ -316,6 +327,7 @@ def generate_cuda_code_from_graph(traced_model):
     output_agent_tenosrs_code_str = trans_str(output_agent_tenosrs_code)
     output_agent_SMEM_code_str = trans_str(output_agent_SMEM_code)
     output_agent_forloop_code_str = trans_str(output_agent_forloop_code)
+    map_agent_tenosrs_code_str = trans_str(map_agent_tenosrs_code)
 
     agent_kernel_code = string.Template(kernel_agent_template).substitute(
         input_declarations_code=input_declarations_str,
@@ -328,7 +340,8 @@ def generate_cuda_code_from_graph(traced_model):
         aggregator_code=aggregator_code_str,
         output_agent_tenosrs_code=output_agent_tenosrs_code_str,
         output_agent_SMEM_code=output_agent_SMEM_code_str,
-        output_agent_forloop_code=output_agent_forloop_code_str
+        output_agent_forloop_code=output_agent_forloop_code_str,
+        map_agent_tenosrs_code=map_agent_tenosrs_code_str,
     )
 
     spmv_kernel_code = string.Template(kernel_spmv_template).substitute(

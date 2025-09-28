@@ -14,93 +14,35 @@
 #include "merged_spmv.h"
 
 // --------------------------------------------------------------------
-// Reference CPU implementation Reducers
-// --------------------------------------------------------------------
-template <typename ValueT, typename OffsetT>
-void SpmvGoldCPU_reducers(
-    const ValueT *tensor_v, const ValueT *tensor_spm1,
-    const ValueT *tensor_spm2, const OffsetT *tensor_v1_idx,
-    const OffsetT *tensor_v2_idx,
-    const OffsetT *row_offsets, // CSR row offsets of len num_rows+1
-    int num_rows, int nv_dim, int ne1_dim, int ne2_dim,
-    ValueT *reducer_1, // [out] size num_rows * ne1_dim
-    ValueT *reducer_2, // [out] size num_rows * ne2_dim
-    ValueT *map_1,     // [out] size num_nonzeros * ne1_dim
-    ValueT *map_2)     // [out] size num_nonzeros * ne2_dim
-{
-  for (OffsetT row = 0; row < static_cast<OffsetT>(num_rows); ++row) {
-    OffsetT row_start = row_offsets[row];
-    OffsetT row_end = row_offsets[row + 1];
-
-    std::vector<ValueT> partial_1(ne1_dim, static_cast<ValueT>(0));
-    std::vector<ValueT> partial_2(ne2_dim, static_cast<ValueT>(0));
-
-    for (OffsetT i = row_start; i < row_end; ++i) {
-      OffsetT selector_i = tensor_v1_idx[i];
-      OffsetT selector_j = tensor_v2_idx[i];
-      const ValueT *v_i = &tensor_v[selector_i * nv_dim];
-      const ValueT *v_j = &tensor_v[selector_j * nv_dim];
-      const ValueT *spm_i = &tensor_spm1[i * ne1_dim];
-      const ValueT *spm_j = &tensor_spm2[i * ne2_dim];
-
-      std::vector<ValueT> map_1_row(ne1_dim);
-      std::vector<ValueT> map_2_row(ne2_dim);
-      for (int j = 0; j < ne1_dim; ++j)
-        map_1_row[j] = v_i[j] + spm_i[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        map_2_row[j] = v_j[j % nv_dim] + spm_j[j];
-
-      for (int j = 0; j < ne1_dim; ++j)
-        map_1[i * ne1_dim + j] = map_1_row[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        map_2[i * ne2_dim + j] = map_2_row[j];
-
-      for (int j = 0; j < ne1_dim; ++j)
-        partial_1[j] += map_1_row[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        partial_2[j] += map_2_row[j];
-    }
-
-    for (int j = 0; j < ne1_dim; ++j)
-      reducer_1[row * ne1_dim + j] = partial_1[j];
-    for (int j = 0; j < ne2_dim; ++j)
-      reducer_2[row * ne2_dim + j] = partial_2[j];
-  }
-}
-
-// --------------------------------------------------------------------
 // Reference CPU implementation Aggregators
 // --------------------------------------------------------------------
 template <typename ValueT, typename OffsetT>
-void SpmvGoldCPU_aggregators(const ValueT *tensor_v, const ValueT *tensor_spm1,
-                             const ValueT *tensor_spm2,
+void SpmvGoldCPU_map(const ValueT *tensor_v, const ValueT *tensor_spm1,
+                            //  const ValueT *tensor_spm2,
                              const OffsetT *tensor_v1_idx,
-                             const OffsetT *tensor_v2_idx, int nv_dim,
-                             int ne1_dim, int ne2_dim, int nnz,
-                             ValueT *aggregator_1, // [out] size ne1_dim
-                             ValueT *aggregator_2, // [out] size ne2_dim
-                             ValueT *map_1, // [out] size num_nonzeros * ne1_dim
-                             ValueT *map_2) // [out] size num_nonzeros * ne2_dim
+                            //  const OffsetT *tensor_v2_idx, 
+                             int nv_dim, int ne1_dim, int ne2_dim, int nnz,
+                             ValueT *map_1)
 {
   for (OffsetT i = 0; i < nnz; ++i) {
     OffsetT selector_i = tensor_v1_idx[i];
-    OffsetT selector_j = tensor_v2_idx[i];
+    // OffsetT selector_j = tensor_v2_idx[i];
     // const ValueT *v_i = &tensor_v[selector_i * nv_dim];
     // const ValueT *v_j = &tensor_v[selector_j * nv_dim];
     const ValueT *spm_i = &tensor_spm1[i * ne1_dim];
-    const ValueT *spm_j = &tensor_spm2[i * ne2_dim];
+    // const ValueT *spm_j = &tensor_spm2[i * ne2_dim];
 
     std::vector<ValueT> map_1_row(ne1_dim);
-    std::vector<ValueT> map_2_row(ne2_dim);
+    // std::vector<ValueT> map_2_row(ne2_dim);
     for (int j = 0; j < ne1_dim; ++j)
       map_1_row[j] = spm_i[j] + spm_i[j];
-    for (int j = 0; j < ne2_dim; ++j)
-      map_2_row[j] =  spm_j[j] + spm_j[j];
+    // for (int j = 0; j < ne2_dim; ++j)
+    //   map_2_row[j] =  spm_j[j] + spm_j[j];
 
     for (int j = 0; j < ne1_dim; ++j)
       map_1[i * ne1_dim + j] = map_1_row[j];
-    for (int j = 0; j < ne2_dim; ++j)
-      map_2[i * ne2_dim + j] = map_2_row[j];
+    // for (int j = 0; j < ne2_dim; ++j)
+    //   map_2[i * ne2_dim + j] = map_2_row[j];
 
     // for (int j = 0; j < ne1_dim; ++j)
     //   aggregator_1[j] += map_1_row[j];
@@ -196,10 +138,15 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
 
   std::vector<ValueT> out_agg1_ref(ne1_dim);
   std::vector<ValueT> out_agg2_ref(ne2_dim);
-  SpmvGoldCPU_aggregators<ValueT, OffsetT>(
-      vector_x.data(), spm_1.data(), spm_2.data(), selector_1.data(),
-      selector_2.data(), nv_dim, ne1_dim, ne2_dim, nnz, out_agg1_ref.data(),
-      out_agg2_ref.data(), out_map1_ref.data(), out_map2_ref.data());
+  SpmvGoldCPU_map<ValueT, OffsetT>(
+      vector_x.data(), 
+      spm_1.data(),
+      //  spm_2.data(),
+       selector_1.data(),
+      //  selector_2.data(),
+        nv_dim, ne1_dim, ne2_dim, nnz, 
+      //  out_agg2_ref.data(),
+       out_map1_ref.data());
 
   std::vector<ValueT> out_map1(nnz * ne1_dim);
   std::vector<ValueT> out_map2(nnz * ne2_dim);
@@ -209,7 +156,10 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
 
   OmpMergeSystem<ValueT, OffsetT>(
       threads,
-      spm_1.data(), spm_2.data(), out_map1.data(), out_map2.data(),
+      spm_1.data(),
+      //  spm_2.data(),
+       out_map1.data(),
+      //  out_map2.data(),
       num_rows, nnz);
 
   auto almost_equal = [](ValueT a, ValueT b) {
@@ -231,14 +181,14 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
       std::cout << std::endl;
       // print out_map2_ref
       std::cout << "map2_ref: ";
-      for (size_t i = 0; i < out_map2_ref.size(); ++i)
-        std::cout << out_map2_ref[i] << " ";
-      std::cout << std::endl;
-      // print out_map2
-      std::cout << "map2: ";
-      for (size_t i = 0; i < out_map2.size(); ++i)
-        std::cout << out_map2[i] << " ";
-      std::cout << std::endl;
+      // for (size_t i = 0; i < out_map2_ref.size(); ++i)
+      //   std::cout << out_map2_ref[i] << " ";
+      // std::cout << std::endl;
+      // // print out_map2
+      // std::cout << "map2: ";
+      // for (size_t i = 0; i < out_map2.size(); ++i)
+      //   std::cout << out_map2[i] << " ";
+      // std::cout << std::endl;
     }
 
   bool ok = true;
@@ -249,13 +199,13 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
         std::cout << "map1 mismatch at " << i << "\n";
       break;
     }
-  for (size_t i = 0; i < out_map2.size() && ok; ++i)
-    if (!almost_equal(out_map2[i], out_map2_ref[i])) {
-      ok = false;
-      if (verbose)
-        std::cout << "map2 mismatch at " << i << "\n";
-      break;
-    }
+  // for (size_t i = 0; i < out_map2.size() && ok; ++i)
+  //   if (!almost_equal(out_map2[i], out_map2_ref[i])) {
+  //     ok = false;
+  //     if (verbose)
+  //       std::cout << "map2 mismatch at " << i << "\n";
+  //     break;
+  //   }
 
   if (verbose)
     std::cout << (ok ? "OmpMergeSystem verification PASSED\n"

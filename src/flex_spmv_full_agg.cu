@@ -81,7 +81,6 @@ void SpmvGold(
     const OffsetT*                         tensor_v1_idx,
     const OffsetT*                         tensor_v2_idx,
     ValueT*                         agg_1, // [out]
-    ValueT*                         agg_2, // [out]
     ValueT*                         map_1, // [out]
     ValueT*                         map_2, // [out]
     CommandLineArgs&                 args)
@@ -98,15 +97,13 @@ void SpmvGold(
 
         // map
         for (int j = 0; j < args.ne1_dim; ++j)
-            map_1[row * args.ne1_dim + j] = v_i[j] + spm_i[j];
+            map_1[row * args.ne1_dim + j] = v_i[j] + v_j[j] + spm_i[j];
         for (int j = 0; j < args.ne2_dim; ++j)
-            map_2[row * args.ne2_dim + j] = v_j[j % args.nv_dim] + spm_j[j];
+            map_2[row * args.ne2_dim + j] = v_j[j % args.nv_dim] + v_i[j % args.nv_dim] + spm_j[j];
 
         // agg
         for (int j = 0; j < args.ne1_dim; ++j)
             agg_1[j] += map_1[row * args.ne1_dim + j];
-        for (int j = 0; j < args.ne2_dim; ++j)
-            agg_2[j] += map_2[row * args.ne2_dim + j];
     }
 }
 
@@ -143,11 +140,9 @@ float LaunchSpMV(
 template <typename ValueT>
 int VerifyDeviceResults(
     ValueT*                         agg_1_ref,
-    ValueT*                         agg_2_ref,
     ValueT*                         map_1_ref,
     ValueT*                         map_2_ref,
     ValueT*                         agg_1_gpu,
-    ValueT*                         agg_2_gpu,
     ValueT*                         map_1_gpu,
     ValueT*                         map_2_gpu,
     bool                            verbose,
@@ -158,13 +153,11 @@ int VerifyDeviceResults(
 
     // Allocate array on host
     ValueT* agg_1_host = new ValueT[args.ne1_dim];
-    ValueT* agg_2_host = new ValueT[args.ne2_dim];
     ValueT* map_1_host = new ValueT[args.ne * args.ne1_dim];
     ValueT* map_2_host = new ValueT[args.ne * args.ne2_dim];
 
     // Copy data back
     cudaMemcpy(agg_1_host, agg_1_gpu, sizeof(ValueT) * args.ne1_dim, cudaMemcpyDeviceToHost);
-    cudaMemcpy(agg_2_host, agg_2_gpu, sizeof(ValueT) * args.ne2_dim, cudaMemcpyDeviceToHost);
     cudaMemcpy(map_1_host, map_1_gpu, sizeof(ValueT) * args.ne * args.ne1_dim, cudaMemcpyDeviceToHost);
     cudaMemcpy(map_2_host, map_2_gpu, sizeof(ValueT) * args.ne * args.ne2_dim, cudaMemcpyDeviceToHost);
 
@@ -180,18 +173,6 @@ int VerifyDeviceResults(
         for (int i = 0; i < args.ne1_dim; ++i)
         {
             printf("%f, ", agg_1_host[i]);
-        }
-        printf("\n");
-
-        printf("\nagg_2 (ref / computed):\n");
-        for (int i = 0; i < args.ne2_dim; ++i)
-        {
-            printf("%f, ", agg_2_ref[i]);
-        }
-        printf("|||");
-        for (int i = 0; i < args.ne2_dim; ++i)
-        {
-            printf("%f, ", agg_2_host[i]);
         }
         printf("\n");
 
@@ -224,11 +205,6 @@ int VerifyDeviceResults(
             printf("agg_1_host[%d] = %f, agg_1_ref[%d] = %f\n", i, agg_1_host[i], i, agg_1_ref[i]);
             return 1;
         }
-    for (int i = 0; i < args.ne2_dim; ++i)
-        if (abs(agg_2_host[i] - agg_2_ref[i]) > epsilon) {
-            printf("agg_2_host[%d] = %f, agg_2_ref[%d] = %f\n", i, agg_2_host[i], i, agg_2_ref[i]);
-            return 1;
-        }
     for (int i = 0; i < args.ne * args.ne1_dim; ++i)
         if (abs(map_1_host[i] - map_1_ref[i]) > epsilon) {
             printf("map_1_host[%d] = %f, map_1_ref[%d] = %f\n", i, map_1_host[i], i, map_1_ref[i]);
@@ -251,7 +227,6 @@ template <
     typename OffsetT>
 float TestGpuMergeCsrmv_from_scratch(
     ValueT*                         agg_1,
-    ValueT*                         agg_2,
     ValueT*                         map_1,
     ValueT*                         map_2,
     FlexParams<ValueT, OffsetT>&    params,
@@ -282,9 +257,9 @@ float TestGpuMergeCsrmv_from_scratch(
     if (!g_quiet)
     {
         int compare = VerifyDeviceResults(
-            agg_1, agg_2, 
+            agg_1, 
             map_1, map_2, 
-            params.output_y_y_aggregator_1_ptr, params.output_y_y_aggregator_2_ptr, 
+            params.output_y_sum_2_ptr, 
             params.output_y_y_add_1_ptr, params.output_y_y_add_2_ptr, 
             g_verbose,
             args
@@ -432,7 +407,6 @@ void RunTest(
 
     // Output vector
     ValueT* agg_1    = new ValueT[args.ne1_dim]();
-    ValueT* agg_2    = new ValueT[args.ne2_dim]();
     ValueT* map_1    = new ValueT[args.ne * args.ne1_dim]();
     ValueT* map_2    = new ValueT[args.ne * args.ne2_dim]();
 
@@ -444,7 +418,6 @@ void RunTest(
         tensor_v1_idx,
         tensor_v2_idx,
         agg_1,
-        agg_2,
         map_1,
         map_2,
         args
@@ -471,8 +444,7 @@ void RunTest(
 
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_1_ptr,       sizeof(ValueT) * args.ne * args.ne1_dim));
     CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_add_2_ptr,       sizeof(ValueT) * args.ne * args.ne2_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_aggregator_1_ptr,       sizeof(ValueT) * args.ne1_dim));
-    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_y_aggregator_2_ptr,       sizeof(ValueT) * args.ne2_dim));
+    CubDebugExit(g_allocator.DeviceAllocate((void **) &params.output_y_sum_2_ptr,       sizeof(ValueT) * args.ne1_dim));
     params.num_rows         = args.num_rows;
     params.num_cols         = args.num_cols;
     params.num_nonzeros     = args.ne;
@@ -488,7 +460,7 @@ void RunTest(
     if (!g_quiet) printf("\n\n");
     printf("Merge-based CsrMV from scratch, "); fflush(stdout);
     avg_ms = TestGpuMergeCsrmv_from_scratch(
-        agg_1, agg_2, map_1, map_2, 
+        agg_1, map_1, map_2, 
         params, timing_iterations, 
         setup_ms, args);
     DisplayPerf<ValueT, OffsetT>(device_giga_bandwidth, setup_ms, avg_ms, args);    
@@ -501,8 +473,7 @@ void RunTest(
     if (params.vector_x_ptr)        CubDebugExit(g_allocator.DeviceFree(params.vector_x_ptr));
     if (params.output_y_y_add_1_ptr)    CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_1_ptr));
     if (params.output_y_y_add_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_add_2_ptr));
-    if (params.output_y_y_aggregator_1_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_aggregator_1_ptr));
-    if (params.output_y_y_aggregator_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_y_aggregator_2_ptr));
+    if (params.output_y_sum_2_ptr)  CubDebugExit(g_allocator.DeviceFree(params.output_y_sum_2_ptr));
 
     if (tensor_v)                   delete[] tensor_v;
     if (tensor_spm1)                delete[] tensor_spm1;
@@ -510,7 +481,6 @@ void RunTest(
     if (tensor_v1_idx)              delete[] tensor_v1_idx;
     if (tensor_v2_idx)              delete[] tensor_v2_idx;
     if (agg_1)                      delete[] agg_1;
-    if (agg_2)                      delete[] agg_2;
     if (map_1)                      delete[] map_1;
     if (map_2)                      delete[] map_2;
 
@@ -569,11 +539,16 @@ int main(int argc, char **argv)
     bool                fp32;
     std::string         mtx_filename;
     int                 timing_iterations   = 100;
-    // tesnor info
+    // // tesnor info
     args.nv = 12314;
     args.ne = 1231234;
     args.num_rows = 1214;
     args.num_cols = 12314;
+            // tesnor info
+        // args.nv = 4;
+        // args.ne = 12;
+        // args.num_rows = 5;
+        // args.num_cols = 4;
     args.nv_dim = 2;
     args.ne1_dim = 2;
     args.ne2_dim = 6;

@@ -13,11 +13,11 @@
 
 #include "merged_spmv.h"
 
-#define USE_REDUCERS 1
-#define USE_AGGREGATORS 0
+// #define USE_REDUCERS 1
+// #define USE_AGGREGATORS 0
 
-// #define USE_REDUCERS 0
-// #define USE_AGGREGATORS 1
+#define USE_REDUCERS 0
+#define USE_AGGREGATORS 1
 
 // --------------------------------------------------------------------
 // Reference CPU implementation Reducers
@@ -52,9 +52,9 @@ void SpmvGoldCPU_reducers(
       std::vector<ValueT> map_1_row(ne1_dim);
       std::vector<ValueT> map_2_row(ne2_dim);
       for (int j = 0; j < ne1_dim; ++j)
-        map_1_row[j] = v_i[j] + spm_i[j];
+        map_1_row[j] = v_i[j] + v_j[j] + spm_i[j];
       for (int j = 0; j < ne2_dim; ++j)
-        map_2_row[j] = v_j[j % nv_dim] + spm_j[j];
+        map_2_row[j] = v_j[j % nv_dim] + v_i[j % nv_dim] + spm_j[j];
 
       for (int j = 0; j < ne1_dim; ++j)
         map_1[i * ne1_dim + j] = map_1_row[j];
@@ -63,14 +63,14 @@ void SpmvGoldCPU_reducers(
 
       for (int j = 0; j < ne1_dim; ++j)
         partial_1[j] += map_1_row[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        partial_2[j] += map_2_row[j];
+      // for (int j = 0; j < ne2_dim; ++j)
+        // partial_2[j] += map_2_row[j];
     }
 
     for (int j = 0; j < ne1_dim; ++j)
       reducer_1[row * ne1_dim + j] = partial_1[j];
-    for (int j = 0; j < ne2_dim; ++j)
-      reducer_2[row * ne2_dim + j] = partial_2[j];
+    // for (int j = 0; j < ne2_dim; ++j)
+    //   reducer_2[row * ne2_dim + j] = partial_2[j];
   }
 }
 
@@ -99,9 +99,9 @@ void SpmvGoldCPU_aggregators(const ValueT *tensor_v, const ValueT *tensor_spm1,
     std::vector<ValueT> map_1_row(ne1_dim);
     std::vector<ValueT> map_2_row(ne2_dim);
     for (int j = 0; j < ne1_dim; ++j)
-      map_1_row[j] = v_i[j] + spm_i[j];
+      map_1_row[j] = v_i[j] + v_j[j] + spm_i[j];
     for (int j = 0; j < ne2_dim; ++j)
-      map_2_row[j] = v_j[j % nv_dim] + spm_j[j];
+      map_2_row[j] = v_j[j % nv_dim] + v_i[j % nv_dim] + spm_j[j];
 
     for (int j = 0; j < ne1_dim; ++j)
       map_1[i * ne1_dim + j] = map_1_row[j];
@@ -110,8 +110,8 @@ void SpmvGoldCPU_aggregators(const ValueT *tensor_v, const ValueT *tensor_spm1,
 
     for (int j = 0; j < ne1_dim; ++j)
       aggregator_1[j] += map_1_row[j];
-    for (int j = 0; j < ne2_dim; ++j)
-      aggregator_2[j] += map_2_row[j];
+    // for (int j = 0; j < ne2_dim; ++j)
+    //   aggregator_2[j] += map_2_row[j];
   }
 }
 
@@ -233,15 +233,19 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
   int threads = omp_get_max_threads();
 #if USE_REDUCERS
   OmpMergeSystem<ValueT, OffsetT>(
-      threads, row_end_offsets.data() + 1, vector_x.data(), selector_1.data(),
-      selector_2.data(), spm_1.data(), spm_2.data(), out_map1.data(),
-      out_map2.data(), out_red1.data(), out_red2.data(), num_rows, nnz);
+      threads, row_end_offsets.data() + 1, vector_x.data(), 
+       spm_1.data(), spm_2.data(), 
+       selector_1.data(), selector_2.data(),
+      out_map1.data(),
+      out_map2.data(), out_red1.data(), num_rows, nnz);
 #endif
 #if USE_AGGREGATORS
   OmpMergeSystem<ValueT, OffsetT>(
-      threads, vector_x.data(), selector_1.data(), selector_2.data(),
-      spm_1.data(), spm_2.data(), out_map1.data(), out_map2.data(),
-      out_agg1.data(), out_agg2.data(), num_rows, nnz);
+      threads, vector_x.data(),
+      spm_1.data(), spm_2.data(), 
+       selector_1.data(), selector_2.data(),
+      out_map1.data(), out_map2.data(),
+      out_agg1.data(), num_rows, nnz);
 #endif
 
   auto almost_equal = [](ValueT a, ValueT b) {

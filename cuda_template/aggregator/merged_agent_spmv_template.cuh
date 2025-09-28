@@ -125,6 +125,7 @@ namespace merged
 
         // Tensor and TensorKey for reducers 
         ${output_agent_tenosrs_code}
+        ${map_agent_tenosrs_code}
 
         /// Shared memory type required by this thread block
         struct _TempStorage

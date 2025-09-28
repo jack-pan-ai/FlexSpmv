@@ -9,13 +9,7 @@ from easier.core.runtime.metadata import Role, get_node_meta, StructuredTensorMe
 from codegen.merged_gen_gpu import generate_cuda_code_from_graph
 from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 
-def analyze_tensor_distribution(compiled_module):
-    graph = compiled_module.graph
-    graph.print_tabular()
-    # for node in graph.nodes:
-    #     # print("Attributes of compiled_module:", dir(node.meta))
-    #     print(get_node_meta(node))
-    #     # print(node)
+from utils import analyze_tensor_distribution
 
 # Part 1: Define model
 class System(esr.Module):
@@ -39,9 +33,11 @@ class System(esr.Module):
                                          mode = 'partition')  # (N, 6)
         
     def forward(self):
+        add_1 = self.spm_1  + self.spm_1  # (N, 2)
+        # add_2 = self.spm_2  + self.spm_2  # (N, 2, 3) (N, 6)
 
-        self.y_add_1[:] = self.spm_1  + self.spm_1  # (N, 2)
-        self.y_add_2[:] = self.spm_2  + self.spm_2  # (N, 2, 3) (N, 6)
+        self.y_add_1[:] = add_1  # (N, 2)
+        # self.y_add_2[:] = add_2  # (N, 2, 3) (N, 6)
 
 def system_test(
         num_nnz=20,
@@ -95,17 +91,18 @@ def system_test(
     # print(traced_model.jit_engine.graph)
     # traced_model.jit_engine.graph.print_tabular()
     traced_model()
-    analyze_tensor_distribution(traced_model.jit_engine)
-    
+    submodule_node_pairs = analyze_tensor_distribution(traced_model)
+    submodule, node_module = submodule_node_pairs[0]
+
     trace_time = time.time() - start_time
     print(f"Model tracing took: {trace_time:.6f} seconds")
 
     print("\nStep 2: Generating CUDA code from the graph")
     start_time = time.time()
     if device == "cuda":
-        generate_cuda_code_from_graph(traced_model.jit_engine)
+        generate_cuda_code_from_graph(submodule, traced_model)
     else:
-        generate_cpu_code_from_graph(traced_model.jit_engine)
+        generate_cpu_code_from_graph(submodule, traced_model)
     codegen_time = time.time() - start_time
     print(f"{device} code generation took: {codegen_time:.6f} seconds")
 
