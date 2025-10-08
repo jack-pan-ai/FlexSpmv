@@ -22,6 +22,8 @@ def get_node_info(node, node_meta_dict, node_placeholder_meta_dict):
     else:
         # metadats of other nodes is saved in the node_group
         node_shape = get_node_meta(node_meta_dict[name]).shape[1:]
+    if node_shape == ():
+        node_shape = (1,)
     return node_shape, op, name, target, args
 
 # Part 2: Generate CUDA code from the graph
@@ -41,14 +43,15 @@ def trace_graph(submodule, traced_model):
     
     # dict here only provide the metadata info
     node_meta_dict = {node.name: node for node in get_node_group(submodule).nodes}
-    # the placeholder nodes here will contain the reducer nodes (which is not used)
-    node_placeholder_meta_dict = {node.name: node \
-        for node in traced_model.jit_engine.graph.nodes if node.op == 'get_attr'}
     # prepare the selector and selector tensor list
     selector_set = set([node.name for node in get_node_group(submodule).nodes \
-        if node.op == 'call_module' and node.meta['nn_module_stack'][node.target][1] == Selector])
+        if node.op == 'call_module' and list(node.meta['nn_module_stack'].values())[0][1] == Selector])
     selector_tensor_set = set([node.args[0].name for node in get_node_group(submodule).nodes \
         if node.name in selector_set])
+    # the placeholder nodes here will contain the reducer nodes (which is not used)
+    node_placeholder_meta_dict = {node.name: node \
+        for node in traced_model.jit_engine.graph.nodes if node.op == 'get_attr' \
+            or node.name in selector_tensor_set}
     print("selector_set: ", selector_set)
     print("selector_tensor_set: ", selector_tensor_set)
     print("node_placeholder_meta_dict: ", node_placeholder_meta_dict)
@@ -110,7 +113,7 @@ def trace_graph(submodule, traced_model):
                 }
             )
         elif op == 'call_module' and \
-             node_meta_dict[name].meta["nn_module_stack"][target][1] == Selector:
+             list(node_meta_dict[name].meta["nn_module_stack"].values())[0][1] == Selector:
             # 2) obtain the selector index
             inputs.append(
                 {
@@ -121,12 +124,12 @@ def trace_graph(submodule, traced_model):
                 }
             )
         elif op == 'call_module' and \
-             node_meta_dict[name].meta["nn_module_stack"][target][1] == Reducer:
+             list(node_meta_dict[name].meta["nn_module_stack"].values())[0][1] == Reducer:
             # save the output information
             outputs.append(
                 {
                     "name": name,
-                    "target": target,
+                    "target": 'reducer',
                     "dtype": "ValueT",
                     "shape": node_shape,
                 }
@@ -192,7 +195,7 @@ def trace_graph(submodule, traced_model):
                         "target": args[0].name,
                         "dtype": "TensorKeyT",
                         "selector": 1,  # vertex tensor
-                        "selector_name": target,
+                        "selector_name": name,
                         "shape": node_shape
                     }
                 )                
@@ -236,6 +239,8 @@ def trace_graph(submodule, traced_model):
             elif 'sum' in str(target):
                 # aggregator
                 target_name = 'sum'
+            elif 'pow' in str(target):
+                target_name = 'pow'
             elif 'setitem' in str(target):
                 # intermediate map output
                 continue

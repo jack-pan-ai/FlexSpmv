@@ -64,12 +64,17 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                 f"  VectorValueIteratorT {name}_ptr; \n")
             input_init_code.append(
                 f"    {name}_ptr(spmv_params.{name}_ptr), \n")
-            target = inp['target']
-            if target not in _tensor_names:
-                _dim = get_dim_length(inp['shape'])
-                input_agent_tenosrs_code.append(
-                    f"  typedef Tensor<ValueT, {_dim}> TensorInput_{target}_T; \n")
-                _tensor_names.add(target)
+            # --------- this is use for older version of the code ------
+            # target = inp['target']
+            # if target not in _tensor_names:
+            #     _dim = get_dim_length(inp['shape'])
+            #     input_agent_tenosrs_code.append(
+            #         f"  typedef Tensor<ValueT, {_dim}> TensorInput_{target}_T; \n")
+            #     _tensor_names.add(target)
+            _dim = get_dim_length(inp['shape'])
+            input_agent_tenosrs_code.append(
+                f"  typedef Tensor<ValueT, {_dim}> TensorInput_{name}_T; \n")
+            _tensor_names.add(name)
 
     # output code in the declarations utils file
     for out in outputs:
@@ -196,6 +201,22 @@ def generate_cuda_code_from_graph(submodule, traced_model):
             map_code.append(
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
                     {op['args'][1]}; \n")
+        elif _op == 'sub':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} - \
+                    {op['args'][1]}; \n")
+        elif _op == 'mul':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} * \
+                    {op['args'][1]}; \n")
+        elif _op == 'pow':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} ^ \
+                    {op['args'][1]}; \n")
+        elif _op == 'truediv':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} / \
+                    {op['args'][1]}; \n")
         elif _op == 'norm':
             map_code.append(
                 f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
@@ -205,6 +226,7 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                     {op['args'][0]}; \n")
         elif _op == 'sum':
             map_code.append(f"    {_name} = {_name} + {op['args'][0]}; \n")
+        
         else:
             # error
             raise ValueError(f"Operation {_op} not supported")
@@ -295,18 +317,22 @@ def generate_cuda_code_from_graph(submodule, traced_model):
         print(f"Reducer code: {op}")
 
     # Create directories for generated code if they don't exist
-    os.makedirs("include", exist_ok=True)
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    include_dir = os.path.join(project_root, "include")
 
     # Read template files
     # map only will use the aggregator template
     _folder = 'reducer' if reducer_operations != [] else 'aggregator'
-    with open(f"cuda_template/{_folder}/merged_agent_spmv_template.cuh", "r") as f:
+    template_agent_path = os.path.join(project_root, "cuda_template", _folder, "merged_agent_spmv_template.cuh")
+    with open(template_agent_path, "r") as f:
         kernel_agent_template = f.read()
 
-    with open(f"cuda_template/merged_utils_template.cuh", "r") as f:
+    template_utils_path = os.path.join(project_root, "cuda_template", "merged_utils_template.cuh")
+    with open(template_utils_path, "r") as f:
         utils_template = f.read()
 
-    with open(f"cuda_template/{_folder}/merged_spmv_template.cuh", "r") as f:
+    template_spmv_path = os.path.join(project_root, "cuda_template", _folder, "merged_spmv_template.cuh")
+    with open(template_spmv_path, "r") as f:
         kernel_spmv_template = f.read()
 
     # Apply templates using string.Template
@@ -355,13 +381,13 @@ def generate_cuda_code_from_graph(submodule, traced_model):
     )
 
     # Write files
-    with open("include/merged_agent_spmv.cuh", "w") as f:
+    with open(os.path.join(include_dir, "merged_agent_spmv.cuh"), "w") as f:
         f.write(agent_kernel_code)
 
-    with open("include/merged_spmv.cuh", "w") as f:
+    with open(os.path.join(include_dir, "merged_spmv.cuh"), "w") as f:
         f.write(spmv_kernel_code)
 
-    with open("include/merged_utils.cuh", "w") as f:
+    with open(os.path.join(include_dir, "merged_utils.cuh"), "w") as f:
         f.write(utils_code)
 
     print("CUDA code generated successfully!")
