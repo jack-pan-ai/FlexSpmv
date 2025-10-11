@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import torch.fx as fx
+import torch.nn as nn
 import operator
 
 import easier as esr
@@ -97,6 +98,7 @@ def compare_outputs(original_state, replaced_state, tolerance=1e-10):
     
     return all_close
 def build_extension():
+    print("Building CUDA extension")
     project_root = "/home/panq/dev/FlexSpmv"
     src = os.path.join(project_root, "merged_binding.cu")
     include_dirs = [project_root, os.path.join(project_root, "include")]
@@ -115,93 +117,79 @@ def build_extension():
     return ext
 
 
-def spmv_cuda_wrapper(ext, bsx, bsy, add_10, gather_idx, row_end_offsets):
-    # Only adjust index dtypes; do not move/convert model tensors post-compile
-    if isinstance(gather_idx, torch.Tensor) and gather_idx.dtype != torch.int32:
-        gather_idx = gather_idx.to(torch.int32)
-    if isinstance(row_end_offsets, torch.Tensor) and row_end_offsets.dtype != torch.int32:
-        row_end_offsets = row_end_offsets.to(torch.int32)
-
-    gather_idx = gather_idx.view(-1)
-    row_end_offsets = row_end_offsets.view(-1)
-
-    # Kernel sizes
-    num_rows = int(row_end_offsets.numel() - 1)
-    expected_nc = int(add_10.numel())
-
-    out1, out2 = ext.merged_spmv_launch(
-        bsx.contiguous(),
-        bsy.contiguous(),
-        gather_idx.contiguous(),
-        add_10.contiguous(),
-        row_end_offsets.contiguous(),
-        num_rows,
-        expected_nc,
-    )
-    # Shape to original expected (nc,) and return easier.Tensor values
-    full1_t = torch.zeros(expected_nc, dtype=add_10.dtype, device=out1.device)
-    full2_t = torch.zeros(expected_nc, dtype=add_10.dtype, device=out2.device)
-    full1_t[: out1.numel()] = out1.view(-1)
-    full2_t[: out2.numel()] = out2.view(-1)
-    e1 = add_10 * 0
-    e2 = add_10 * 0
-    e1 = e1.view(-1)
-    e2 = e2.view(-1)
-    e1.copy_(full1_t)
-    e2.copy_(full2_t)
-    return [e1, e2]
-
-
 def replace_submodule(
     compiled_eqn,
     ext,
     submodule_name: str = "easier5_select_reduce92",
     input_names = ("add_10", "bsx", "bsy"),
 ):
+    print(f"Replacing submodule {submodule_name} with CUDA extension")
     # Find target GraphModule by name
     for (gm, node) in get_submodules(compiled_eqn, run_to_collect=False):
         if node.name != submodule_name:
             continue
 
-        # Resolve required buffers (no materialization)
-        gather_idx = getattr(gm, 'gather_b', getattr(compiled_eqn, 'gather_b')).idx
-        row_end_offsets = getattr(gm, 'scatter_b', getattr(compiled_eqn, 'scatter_b')).idx
+        # Extract required static tensors from the original submodule
+        # gather_b.idx and scatter_b.idx
+        try:
+            gather_idx = gm.get_submodule("gather_b").idx
+            row_end_offsets = gm.get_submodule("scatter_b").idx
+        except Exception as e:
+            raise RuntimeError(f"Failed to access required indices from submodule '{submodule_name}': {e}")
 
-        # Register buffers for FX get_attr
-        if '_gather_idx' not in dict(gm.named_buffers()):
-            gm.register_buffer('_gather_idx', gather_idx)
-        else:
-            gm._buffers['_gather_idx'] = gather_idx
-        if '_row_end_offsets' not in dict(gm.named_buffers()):
-            gm.register_buffer('_row_end_offsets', row_end_offsets)
-        else:
-            gm._buffers['_row_end_offsets'] = row_end_offsets
+        # Define a lightweight wrapper module that matches the original call signature
+        class _Easier5Cuda(nn.Module):
+            def __init__(self, ext_module, gather_idx_tensor, row_end_offsets_tensor):
+                super().__init__()
+                # Ensure dtypes/contiguity for indices expected by the kernel (int32 offsets)
+                gather_idx_tensor = gather_idx_tensor.contiguous()
+                row_end_offsets_tensor = row_end_offsets_tensor.contiguous()
+                if gather_idx_tensor.dtype != torch.int32:
+                    gather_idx_tensor = gather_idx_tensor.to(torch.int32)
+                if row_end_offsets_tensor.dtype != torch.int32:
+                    row_end_offsets_tensor = row_end_offsets_tensor.to(torch.int32)
 
-        # Build a minimal graph: call wrapper(add_10, bsx, bsy, _gather_idx, _row_end_offsets)
-        g = fx.Graph()
-        placeholders = {name: g.placeholder(name) for name in input_names}
-        n_gather = g.get_attr('_gather_idx')
-        n_rows = g.get_attr('_row_end_offsets')
+                self.register_buffer("gather_b_1_idx", gather_idx_tensor, persistent=False)
+                self.register_buffer("row_end_offsets", row_end_offsets_tensor, persistent=False)
+                self._ext = ext_module
 
-        def _wrapped(bsx, bsy, add_10, gather_idx, row_end_offsets, _ext=ext):
-            return spmv_cuda_wrapper(_ext, bsx, bsy, add_10, gather_idx, row_end_offsets)
+            def forward(self, add_10, bsx, bsy):
+                # Keep original arg order: (add_10, bsx, bsy)
+                device = add_10.device
+                gi = self.gather_b_1_idx
+                ro = self.row_end_offsets
+                if gi.device != device:
+                    gi = gi.to(device, non_blocking=True)
+                if ro.device != device:
+                    ro = ro.to(device, non_blocking=True)
 
-        call = g.call_function(
-            _wrapped,
-            args=(
-                placeholders["bsx"],
-                placeholders["bsy"],
-                placeholders["add_10"],
-                n_gather,
-                n_rows,
-            ),
-        )
-        out0 = g.call_function(operator.getitem, args=(call, 0))
-        out1 = g.call_function(operator.getitem, args=(call, 1))
-        g.output((out0, out1))
+                # Use CSR convention: ro length == num_rows + 1
+                num_rows = int(ro.numel() - 1)
 
-        new_gm = fx.GraphModule(gm, g)
-        setattr(compiled_eqn, node.target, new_gm)
+                # Ensure contiguity of runtime tensors
+                add_10_c = add_10.contiguous()
+                bsx_c = bsx.contiguous()
+                bsy_c = bsy.contiguous()
+
+                # Columns correspond to input vector length
+                num_cols = int(add_10_c.numel())
+
+                out1, out2 = self._ext.merged_spmv_launch(
+                    bsx_c, bsy_c, gi, add_10_c, ro, num_rows, num_cols
+                )
+                # Original subgraph returns a list [scatter_b_2, scatter_b_3]
+                return [out1, out2]
+
+        # Replace the submodule on the parent with our CUDA-backed wrapper
+        def _get_parent_and_name(root, fqname: str):
+            parts = fqname.split(".")
+            parent = root
+            for p in parts[:-1]:
+                parent = getattr(parent, p)
+            return parent, parts[-1]
+
+        parent, attr_name = _get_parent_and_name(compiled_eqn, submodule_name) # check
+        setattr(parent, attr_name, _Easier5Cuda(ext, gather_idx, row_end_offsets))
         return True
     return False
 
