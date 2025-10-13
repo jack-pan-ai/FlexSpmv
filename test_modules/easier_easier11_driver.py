@@ -18,6 +18,7 @@ from torch.utils.cpp_extension import load
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.merged_gen_gpu import generate_cuda_code_from_graph
+from python_wrapper.dynamic_replace_submodule import dynamic_replace_submodule
 
 from shallow_water_equation.swe_main import ShallowWaterEquation
 from shallow_water_equation.utils import get_submodules
@@ -49,6 +50,26 @@ def restore_model_state(model, state):
     model.h.copy_(state['h'])
     model.uh.copy_(state['uh'])
     model.vh.copy_(state['vh'])
+
+
+def coo_rows_to_csr_ptr(row_ids: torch.Tensor, num_rows: int) -> torch.Tensor:
+    """Convert COO row indices to CSR row pointer (crow_indices) of length num_rows+1.
+    Uses torch._convert_indices_from_coo_to_csr if available; falls back to bincount+cumsum.
+    Returns int64 on CPU; caller can cast/move as needed.
+    """
+    if row_ids.dtype != torch.int64:
+        row_ids = row_ids.to(torch.int64)
+    # Prefer built-in if present
+    conv = getattr(torch, "_convert_indices_from_coo_to_csr", None)
+    if callable(conv):
+        crow = conv(row_ids, size=num_rows)
+        return crow
+    # Fallback: bincount then cumsum
+    counts = torch.bincount(row_ids, minlength=num_rows)
+    crow = torch.empty(num_rows + 1, dtype=torch.int64)
+    crow[0] = 0
+    crow[1:] = torch.cumsum(counts, dim=0)
+    return crow
 
 
 def run_model_steps(model, num_steps=1):
@@ -130,12 +151,19 @@ def replace_submodule(
             continue
 
         # Extract required static tensors from the original submodule
-        # gather_b.idx and scatter_b.idx
+        # Prefer exact names that codegen produced for gather indices
         try:
-            gather_idx = gm.get_submodule("gather_b").idx
-            row_end_offsets = gm.get_submodule("scatter_b").idx
+            _selector = gm.get_submodule("gather_b")
+            _reducer = gm.get_submodule("scatter_b")
+            gather_idx = _selector.idx
+            scatter_row_ids = _reducer.idx
+            inferred_num_rows = _reducer.n
+
+            row_end_offsets = coo_rows_to_csr_ptr(scatter_row_ids, inferred_num_rows)
         except Exception as e:
-            raise RuntimeError(f"Failed to access required indices from submodule '{submodule_name}': {e}")
+            raise RuntimeError(
+                f"Failed to access required indices from submodule '{submodule_name}': {e}"
+            )
 
         # Define a lightweight wrapper module that matches the original call signature
         class _Easier5Cuda(nn.Module):
@@ -149,8 +177,10 @@ def replace_submodule(
                 if row_end_offsets_tensor.dtype != torch.int32:
                     row_end_offsets_tensor = row_end_offsets_tensor.to(torch.int32)
 
-                self.register_buffer("gather_b_1_idx", gather_idx_tensor, persistent=False)
-                self.register_buffer("row_end_offsets", row_end_offsets_tensor, persistent=False)
+                self.register_buffer("gather_b_1_idx", 
+                                     gather_idx_tensor, persistent=False)
+                self.register_buffer("row_end_offsets", 
+                                     row_end_offsets_tensor, persistent=False)
                 self._ext = ext_module
 
             def forward(self, add_10, bsx, bsy):
@@ -175,21 +205,12 @@ def replace_submodule(
                 num_cols = int(add_10_c.numel())
 
                 out1, out2 = self._ext.merged_spmv_launch(
-                    bsx_c, bsy_c, gi, add_10_c, ro, num_rows, num_cols
+                    bsx_c, bsy_c, add_10_c, gi, ro, num_rows, num_cols
                 )
                 # Original subgraph returns a list [scatter_b_2, scatter_b_3]
                 return [out1, out2]
 
-        # Replace the submodule on the parent with our CUDA-backed wrapper
-        def _get_parent_and_name(root, fqname: str):
-            parts = fqname.split(".")
-            parent = root
-            for p in parts[:-1]:
-                parent = getattr(parent, p)
-            return parent, parts[-1]
-
-        parent, attr_name = _get_parent_and_name(compiled_eqn, submodule_name) # check
-        setattr(parent, attr_name, _Easier5Cuda(ext, gather_idx, row_end_offsets))
+        setattr(compiled_eqn, submodule_name, _Easier5Cuda(ext, gather_idx, row_end_offsets))
         return True
     return False
 
@@ -234,7 +255,8 @@ def main():
     # Step 4: Restore initial state and replace submodule
     print("\n=== Step 4: Replacing submodule with CUDA extension ===")
     restore_model_state(compiled_eqn, initial_state)
-    ok = replace_submodule(compiled_eqn, extension)
+    # ok = replace_submodule(compiled_eqn, extension)
+    ok = dynamic_replace_submodule(compiled_eqn, extension)
     if not ok:
         raise RuntimeError("Failed to locate target submodule easier5_select_reduce92 for replacement")
     print("CUDA extension compiled and registered successfully")

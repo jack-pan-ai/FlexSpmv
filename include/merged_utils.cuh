@@ -249,7 +249,7 @@ struct FlexParams
       ValueT *add_10_ptr; 
   ValueT *bsx_ptr; 
   ValueT *bsy_ptr; 
-  OffsetT *gather_b_1_ptr; 
+  OffsetT *gather_b_ptr; 
   ValueT *output_y_scatter_b_2_ptr; 
   ValueT *output_y_scatter_b_3_ptr; 
 

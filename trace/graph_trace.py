@@ -110,6 +110,7 @@ def trace_graph(submodule, traced_model):
                     "target": target,
                     "dtype": "scalar_t",
                     "shape": node_shape,
+                    "op": op,
                 }
             )
         elif op == 'call_module' and \
@@ -121,6 +122,7 @@ def trace_graph(submodule, traced_model):
                     "target": target,
                     "dtype": "int",
                     "shape": node_shape,
+                    "op": op,
                 }
             )
         elif op == 'call_module' and \
@@ -132,6 +134,7 @@ def trace_graph(submodule, traced_model):
                     "target": 'reducer',
                     "dtype": "ValueT",
                     "shape": node_shape,
+                    "op": op,
                 }
             )
         elif op == 'call_function' and "setitem" in str(target):
@@ -143,6 +146,7 @@ def trace_graph(submodule, traced_model):
                     "target": args[-1],
                     "dtype": "ValueT",
                     "shape": node_shape,
+                    "op": op,
                 }
             )
         elif op == 'call_function' and "sum" in str(target):
@@ -154,6 +158,7 @@ def trace_graph(submodule, traced_model):
                     "target": target,
                     "dtype": "ValueT",
                     "shape": node_shape,
+                    "op": op,
                 }
             )
     # debug print
@@ -183,7 +188,7 @@ def trace_graph(submodule, traced_model):
                         "target": target,
                         "dtype": "TensorT",
                         "selector": 0, # edge tensor
-                        "selector_name": name,
+                        "selector_name": name, # name and target are the same
                         "shape": node_shape
                     }
                 )
@@ -195,7 +200,7 @@ def trace_graph(submodule, traced_model):
                         "target": args[0].name,
                         "dtype": "TensorKeyT",
                         "selector": 1,  # vertex tensor
-                        "selector_name": name,
+                        "selector_name": target, # name and target are not same
                         "shape": node_shape
                     }
                 )                

@@ -185,7 +185,7 @@ namespace merged
           VectorValueIteratorT add_10_ptr; 
   VectorValueIteratorT bsx_ptr; 
   VectorValueIteratorT bsy_ptr; 
-  ColumnIndicesIteratorT gather_b_1_ptr; 
+  ColumnIndicesIteratorT gather_b_ptr; 
 
 
         //---------------------------------------------------------------------
@@ -204,7 +204,7 @@ namespace merged
                   add_10_ptr(spmv_params.add_10_ptr), 
     bsx_ptr(spmv_params.bsx_ptr), 
     bsy_ptr(spmv_params.bsy_ptr), 
-    gather_b_1_ptr(spmv_params.gather_b_1_ptr), 
+    gather_b_ptr(spmv_params.gather_b_ptr), 
 
               spmv_params(spmv_params)
         {
@@ -409,7 +409,7 @@ namespace merged
     TensorInput_bsx_T bsx(bsx_ptr_current); 
     VectorValueIteratorT bsy_ptr_current = bsy_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
     TensorInput_bsy_T bsy(bsy_ptr_current); 
-    ColumnIndicesIteratorT gather_b_1_ptr_current =                     gather_b_1_ptr + tile_start_coord.y + nonzero_idx; 
+    ColumnIndicesIteratorT gather_b_1_ptr_current =                     gather_b_ptr + tile_start_coord.y + nonzero_idx; 
     TensorInput_add_10_T                     gather_b_1(add_10_ptr + *gather_b_1_ptr_current * 1); 
 
 

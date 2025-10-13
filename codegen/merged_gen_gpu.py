@@ -9,6 +9,8 @@ from easier.core.jit import EasierTracer
 import scipy.sparse
 
 from codegen.utils import get_dim_length
+from codegen.merged_gen_binding import generate_binding_code
+# from codegen.merged_gen_wrapper import generate_wrapper_code
 from trace.graph_trace import trace_graph
 
 
@@ -48,14 +50,16 @@ def generate_cuda_code_from_graph(submodule, traced_model):
     _tensor_names = set()
     for inp in inputs:
         name = inp['name']
+        target = inp['target']
         if inp['dtype'] == 'int':
-            # column indices
+            # column indices, here target is used
+            # considering that multiple selectors might have the same target
             input_declarations_utils_code.append(
-                f"  OffsetT *{name}_ptr; \n")
+                f"  OffsetT *{target}_ptr; \n")
             input_declarations_code.append(
-                f"  ColumnIndicesIteratorT {name}_ptr; \n")
+                f"  ColumnIndicesIteratorT {target}_ptr; \n")
             input_init_code.append(
-                f"    {name}_ptr(spmv_params.{name}_ptr), \n")
+                f"    {target}_ptr(spmv_params.{target}_ptr), \n")
         else:
             # spm and vector x
             input_declarations_utils_code.append(
@@ -64,13 +68,6 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                 f"  VectorValueIteratorT {name}_ptr; \n")
             input_init_code.append(
                 f"    {name}_ptr(spmv_params.{name}_ptr), \n")
-            # --------- this is use for older version of the code ------
-            # target = inp['target']
-            # if target not in _tensor_names:
-            #     _dim = get_dim_length(inp['shape'])
-            #     input_agent_tenosrs_code.append(
-            #         f"  typedef Tensor<ValueT, {_dim}> TensorInput_{target}_T; \n")
-            #     _tensor_names.add(target)
             _dim = get_dim_length(inp['shape'])
             input_agent_tenosrs_code.append(
                 f"  typedef Tensor<ValueT, {_dim}> TensorInput_{name}_T; \n")
@@ -160,8 +157,8 @@ def generate_cuda_code_from_graph(submodule, traced_model):
         # obtain the dimension of the selector
         _dim = get_dim_length(inter['shape'])
         _name = inter['name']
-        _target = inter['target']
-        _selector_name = inter['selector_name']
+        _target = inter['target'] # target is the args[0]
+        _selector_name = inter['selector_name'] # selector_name is the target
         if inter['selector'] == 1:
             # load the selector register
             current = f"{_name}_ptr_current"
@@ -170,7 +167,7 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                     {_selector_name}_ptr + tile_start_coord.y + nonzero_idx; \n")
             selector_code.append(
                 f"    TensorInput_{_target}_T \
-                    {_selector_name}({_target}_ptr + *{current} * {_dim}); \n")
+                    {_name}({_target}_ptr + *{current} * {_dim}); \n")
         else:
             # spm loading
             current = f"{_name}_ptr_current"
@@ -391,3 +388,7 @@ def generate_cuda_code_from_graph(submodule, traced_model):
         f.write(utils_code)
 
     print("CUDA code generated successfully!")
+
+    # Delegate binding and wrapper generation to dedicated modules
+    generate_binding_code(project_root, inputs, outputs, selector_register)
+    # generate_wrapper_code(project_root, inputs, outputs, selector_register)
