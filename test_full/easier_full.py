@@ -4,6 +4,22 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+import shutil
+import hashlib
+from typing import Dict
+import concurrent.futures
+
+# Lightweight in-process cache to avoid reloading already-built identical extensions
+EXT_CACHE: Dict[str, object] = {}
+
+
+def _nvcc_threads_flag() -> str:
+    try:
+        default_threads = min(4, os.cpu_count() or 1)
+        n = max(1, int(os.getenv("NVCC_THREADS", default_threads)))
+    except Exception:
+        n = min(4, os.cpu_count() or 1)
+    return f"--threads={n}"
 
 import torch
 import torch.fx as fx
@@ -22,21 +38,23 @@ from python_wrapper.dynamic_replace_submodule import dynamic_replace_submodule
 
 from shallow_water_equation.swe_main import ShallowWaterEquation
 from shallow_water_equation.assemble_shallow_water import ShallowWaterInitializer
-from test_modules.utils import get_submodules, analyze_tensor_distribution, assemble_shallow_water_test_model, assemble_shallow_water_initializer_test_model
+from test_full.utils import get_submodules, analyze_tensor_distribution, assemble_shallow_water_test_model, assemble_shallow_water_initializer_test_model
 
 
-def trace_easier11(mesh_path: str, sw_path: str, device: str, backend: str, comm_backend: str, dt: float):
+def trace_easier_full(mesh_path: str, sw_path: str, device: str, backend: str, comm_backend: str, dt: float, verify: str):
     esr.init(comm_backend)
-    # eqn = ShallowWaterEquation(mesh_path, sw_path, dt, device)
-    # [compiled_eqn] = esr.compile([eqn], backend)
-    # compiled_eqn()
-    compiled_eqn = assemble_shallow_water_test_model(mesh_path, sw_path, device)
-    # compiled_eqn = assemble_shallow_water_initializer_test_model(mesh_path, sw_path, device)
-    submodules = get_submodules(compiled_eqn, run_to_collect=False)
-    for (submodule, node) in submodules:
-        if node.name == "easier2_select2":
-            return compiled_eqn, submodule
-    raise RuntimeError("easier2_select2 not found in traced graph")
+    if verify == "model":
+        eqn = ShallowWaterEquation(mesh_path, sw_path, dt, device)
+        [compiled_eqn] = esr.compile([eqn], backend)
+        compiled_eqn()
+    elif verify == "initializer":
+        compiled_eqn = assemble_shallow_water_initializer_test_model(mesh_path, sw_path, device)
+    else:  # component
+        compiled_eqn = assemble_shallow_water_test_model(mesh_path, sw_path, device)
+    submodules, nodes = get_submodules(compiled_eqn, run_to_collect=False)
+    if len(submodules) == 0:
+        raise RuntimeError("No call_module nodes found in traced graph")
+    return compiled_eqn, submodules, nodes
 
 
 def save_model_state(model):
@@ -123,17 +141,17 @@ def coo_rows_to_csr_ptr(row_ids: torch.Tensor, num_rows: int) -> torch.Tensor:
     return crow
 
 
-def run_model_steps(model, num_steps=1):
+def run_model_steps(model, num_steps=1, verify: str = "component"):
     """Run the model for a specified number of steps and capture final state"""
     for step in range(num_steps):
         model()
         print(f"Step {step + 1}/{num_steps} completed")
-    
-    # Return final state
-    # final_state = save_model_state(model)
-    final_state = save_components_state(model)
-    # final_state = save_initializer_state(model)
-    return final_state
+
+    if verify == "model":
+        return save_model_state(model)
+    if verify == "initializer":
+        return save_initializer_state(model)
+    return save_components_state(model)
 
 
 def compare_outputs(original_state, replaced_state, tolerance=1e-10):
@@ -258,29 +276,146 @@ def compare_initializer_outputs(original_state, replaced_state, tolerance=1e-10)
         print("❌ FAILED: Initializer outputs differ")
 
     return all_close
-def build_extension():
+
+def build_extension(name):
     print("Building CUDA extension")
     project_root = "/home/panq/dev/FlexSpmv"
     src = os.path.join(project_root, "merged_binding.cu")
     include_dirs = [project_root, os.path.join(project_root, "include")]
+    # Configure environment for faster, cached builds
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
+        
+    if "MAX_JOBS" not in os.environ and os.cpu_count():
+        os.environ["MAX_JOBS"] = str(os.cpu_count())
+
+    # Compute a stable hash of the generated CUDA source to enable 
+    # cache reuse across iterations
+    try:
+        with open(src, "rb") as f:
+            src_bytes = f.read()
+        code_hash = hashlib.sha1(src_bytes).hexdigest()[:12]
+    except Exception:
+        code_hash = "nohash"
+    ext_name = f"new_{name}_{code_hash}"
+
+    # Return already loaded extension if source content is identical
+    cached = EXT_CACHE.get(code_hash)
+    if cached is not None:
+        return cached
+
+    # Use PyTorch's persistent extension cache (~/.cache/torch_extensions) by
+    # not overriding build_directory; this allows incremental rebuilds across iterations
     ext = load(
-        name="flex_spmv_ext",
+        name=ext_name,
         sources=[src],
         extra_include_paths=include_dirs,
-        extra_cflags=["-O3"],
+        extra_cflags=["-O3", "-DNDEBUG"],
         extra_cuda_cflags=[
             "-O3",
             "--use_fast_math",
             "--expt-relaxed-constexpr",
+            _nvcc_threads_flag(),
+            "-DNDEBUG",
         ],
-        build_directory=tempfile.mkdtemp(prefix="easier_build_"),
-        keep_intermediates=True,
-        verbose=True,
+        keep_intermediates=False,
+        verbose=False,
     )
+    EXT_CACHE[code_hash] = ext
     return ext
 
+
+def build_extension_from_src(name, src_path, snapshot_include_dir, hash_key):
+    print(f"Building CUDA extension from snapshot: {src_path}")
+    project_root = "/home/panq/dev/FlexSpmv"
+    # Prepend snapshot include dir to ensure headers match the generated source
+    include_dirs = [snapshot_include_dir, project_root]
+
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
+    if shutil.which("sccache"):
+        os.environ.setdefault("CMAKE_C_COMPILER_LAUNCHER", "sccache")
+        os.environ.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", "sccache")
+        os.environ.setdefault("CMAKE_CUDA_COMPILER_LAUNCHER", "sccache")
+    elif shutil.which("ccache"):
+        os.environ.setdefault("CMAKE_C_COMPILER_LAUNCHER", "ccache")
+        os.environ.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", "ccache")
+        os.environ.setdefault("CMAKE_CUDA_COMPILER_LAUNCHER", "ccache")
+    if "MAX_JOBS" not in os.environ and os.cpu_count():
+        # Throttle ninja parallelism to avoid oversubscription
+        os.environ["MAX_JOBS"] = str(min(8, os.cpu_count()))
+
+    # Use combined hash (source + headers) passed from snapshot
+    code_hash = hash_key or "nohash"
+    ext_name = f"new_{name}_{code_hash}"
+
+    cached = EXT_CACHE.get(code_hash)
+    if cached is not None:
+        return cached
+
+    ext = load(
+        name=ext_name,
+        sources=[src_path],
+        extra_include_paths=include_dirs,
+        extra_cflags=["-O3", "-DNDEBUG"],
+        extra_cuda_cflags=[
+            "-O3",
+            "--use_fast_math",
+            "--expt-relaxed-constexpr",
+            _nvcc_threads_flag(),
+            "-DNDEBUG",
+        ],
+        keep_intermediates=False,
+        verbose=False,
+    )
+    EXT_CACHE[code_hash] = ext
+    return ext
+
+
+def _hash_directory_tree(root_dir: str) -> str:
+    sha1 = hashlib.sha1()
+    for dirpath, _, filenames in os.walk(root_dir):
+        for fname in sorted(filenames):
+            fpath = os.path.join(dirpath, fname)
+            try:
+                with open(fpath, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        sha1.update(chunk)
+            except Exception:
+                continue
+    return sha1.hexdigest()[:12]
+
+
+def snapshot_generated_source(suffix: str) -> tuple[str, str, str]:
+    project_root = "/home/panq/dev/FlexSpmv"
+    src = os.path.join(project_root, "merged_binding.cu")
+    inc_dir = os.path.join(project_root, "include")
+    if not os.path.exists(src):
+        raise FileNotFoundError(src)
+    tmp_dir = tempfile.mkdtemp(prefix=f"easier_src_{suffix}_")
+    dst_src = os.path.join(tmp_dir, f"merged_binding_{suffix}.cu")
+    shutil.copyfile(src, dst_src)
+    # Snapshot include directory to ensure consistency with generated source
+    dst_inc = os.path.join(tmp_dir, "include")
+    shutil.copytree(inc_dir, dst_inc)
+    # Combined content hash (source + headers) to ensure unique cache key
+    try:
+        with open(dst_src, "rb") as f:
+            src_bytes = f.read()
+        src_hash = hashlib.sha1(src_bytes).hexdigest()[:12]
+    except Exception:
+        src_hash = "nohash"
+    dir_hash = _hash_directory_tree(dst_inc)
+    combined_hash = hashlib.sha1((src_hash + dir_hash).encode()).hexdigest()[:12]
+    return dst_src, dst_inc, combined_hash
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate and load CUDA code for easier2_select2 and test correctness")
+    parser = argparse.ArgumentParser(description="Generate and load CUDA code for full and test correctness")
     parser.add_argument("mesh", type=str, help="Path to mesh HDF5 file")
     parser.add_argument("sw", type=str, help="Path to shallow water HDF5 file")
     parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
@@ -290,61 +425,80 @@ def main():
     parser.add_argument("--keep", action="store_true", help="Keep generated files")
     parser.add_argument("--steps", type=int, default=10, help="Number of simulation steps to run for testing")
     parser.add_argument("--tolerance", type=float, default=1e-10, help="Tolerance for correctness comparison")
+    parser.add_argument("--verify", type=str, default="component", choices=["model", "initializer", "component"], help="Which pipeline to verify")
 
     args = parser.parse_args()
 
         
     # Step 1: Trace and get the original model
     print("=== Step 1: Tracing original model ===")
-    compiled_eqn, submodule = trace_easier11(
+    compiled_eqn, submodules, nodes = trace_easier_full(
         args.mesh,
         args.sw,
         args.device,
         args.backend,
         args.comm_backend,
         args.dt,
+        args.verify,
     )
     compiled_eqn()
     # Step 2: Save initial state and run original model
     print("\n=== Step 2: Running original model ===")
-    # _ =analyze_tensor_distribution(compiled_eqn)
-    # exit()
-    # initial_state = save_model_state(compiled_eqn)
-    initial_state = save_components_state(compiled_eqn)
-    # initial_state = save_initializer_state(compiled_eqn)
-    original_final_state = run_model_steps(compiled_eqn, args.steps)
+    if args.verify == "model":
+        initial_state = save_model_state(compiled_eqn)
+    elif args.verify == "initializer":
+        initial_state = save_initializer_state(compiled_eqn)
+    else:
+        initial_state = save_components_state(compiled_eqn)
+    original_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
     # print(f"Original model final state: {original_final_state}")
     
-    # Step 3: Generate and build CUDA extension
-    print("\n=== Step 3: Generating and building CUDA extension ===")
-    generate_cuda_code_from_graph(submodule, compiled_eqn)
-    extension = build_extension()
-    
-    # Step 4: Restore initial state and replace submodule
-    print("\n=== Step 4: Replacing submodule with CUDA extension ===")
-    ok = dynamic_replace_submodule(compiled_eqn, extension, "easier2_select2")
-    if not ok:
-        raise RuntimeError("Failed to locate target submodule easier2_select2 for replacement")
-    print("CUDA extension compiled and registered successfully")
+    # Step 3: Generate CUDA for each submodule and snapshot sources (sequential to avoid overwrites)
+    print("\n=== Step 3: Generating CUDA for each submodule (snapshotting) ===")
+    build_jobs = []  # list of (module_name, snapshot_src, snapshot_inc, combined_hash)
+    for submodule, node in zip(submodules, nodes):
+        generate_cuda_code_from_graph(submodule, compiled_eqn)
+        snap_src, snap_inc, combined_hash = snapshot_generated_source(node.name)
+        build_jobs.append((node.name, snap_src, snap_inc, combined_hash))
+
+    # Step 3b: Build all snapshots in parallel
+    print("\n=== Step 3b: Building CUDA extensions in parallel ===")
+    n_workers = min(len(build_jobs), max(1, (os.cpu_count() or 2) // 2))
+    futures = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+        for mod_name, snap_src, snap_inc, combined_hash in build_jobs:
+            futures[mod_name] = executor.submit(
+                build_extension_from_src, mod_name, snap_src, snap_inc, combined_hash
+            )
+
+        # Wait for all to finish and collect modules
+        built_extensions = {name: fut.result() for name, fut in futures.items()}
+
+    # Step 4: Restore initial state and replace submodules sequentially (to preserve semantics)
+    print("\n=== Step 4: Replacing submodules with compiled CUDA extensions ===")
+    for node in nodes:
+        extension = built_extensions[node.name]
+        ok = dynamic_replace_submodule(compiled_eqn, extension, node.name)
+        if not ok:
+            raise RuntimeError(f"Failed to locate target submodule {node.name} for replacement")
+        print(f"Replaced submodule {node.name} successfully")
     
     # Step 5: Run model with replaced submodule
-    print("\n=== Step 5: Running model with replaced submodule ===")
-    # restore_model_state(compiled_eqn, initial_state)
-    restore_components_state(compiled_eqn, initial_state)
-    # restore_initializer_state(compiled_eqn, initial_state)
-    replaced_final_state = run_model_steps(compiled_eqn, args.steps)
-    # print(f"Replaced model final state: {replaced_final_state}")
-    
-    # Step 6: Compare outputs
-    print("\n=== Step 6: Comparing outputs ===")
-    # Detect which compare function to use based on available keys
-    if isinstance(original_final_state.get('src_p', None), list):
-        correctness_passed = compare_components_outputs(original_final_state, replaced_final_state)
-    elif 'x' in original_final_state:
+    print("\n=== Step 5: Running replaced model and Comparing outputs ===")
+
+    if args.verify == "model":
+        restore_model_state(compiled_eqn, initial_state)
+        replaced_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
+        correctness_passed = compare_outputs(original_final_state, replaced_final_state, args.tolerance)
+    elif args.verify == "initializer":
+        restore_initializer_state(compiled_eqn, initial_state)
+        replaced_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
         correctness_passed = compare_initializer_outputs(original_final_state, replaced_final_state, args.tolerance)
     else:
-        correctness_passed = compare_outputs(original_final_state, replaced_final_state, args.tolerance)
-    
+        restore_components_state(compiled_eqn, initial_state)
+        replaced_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
+        correctness_passed = compare_components_outputs(original_final_state, replaced_final_state)
+        
     return 0 if correctness_passed else 1
 
 

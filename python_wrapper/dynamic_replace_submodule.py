@@ -4,8 +4,18 @@ import torch.nn as nn
 from easier import Selector, Reducer
 from typing import List, Tuple, Dict, Optional, Iterable
 
-from shallow_water_equation.utils import get_submodules
-
+def get_submodules_wrapper(eqn, node_name, run_to_collect=True):
+    # get the graph of the eqn
+    if run_to_collect:
+        eqn()
+    graph = eqn.jit_engine.graph
+    
+    submodules = []
+    for node in graph.nodes:
+        if node.op == 'call_module' and node.name == node_name:
+            submod = eqn.get_submodule(node.target)
+            submodules.append((submod, node))
+    return submodules
 
 def _coo_rows_to_csr_ptr(row_ids: torch.Tensor, num_rows: Optional[int] = None) -> Tuple[torch.Tensor, int]:
     """Convert COO row indices to CSR crow_indices and return (crow_indices, num_rows).
@@ -118,9 +128,12 @@ class _DynamicCudaWrapper(nn.Module):
             self.register_buffer(buf_name, t, persistent=False)
             buf_names.append(buf_name)
         # CSR row_end_offsets as int32 buffer
-        reo = row_end_offsets.contiguous()
-        if reo.dtype != torch.int32:
-            reo = reo.to(torch.int32)
+        if row_end_offsets is not None:
+            reo = row_end_offsets.contiguous()
+            if reo.dtype != torch.int32:
+                reo = reo.to(torch.int32)
+        else:
+            reo = None
         self.register_buffer("row_end_offsets", reo, persistent=False)
 
         self._ext = ext_module
@@ -136,9 +149,13 @@ class _DynamicCudaWrapper(nn.Module):
         }
         device = next(iter(arg_map.values())).device
 
-        ro = self.row_end_offsets
-        if ro.device != device:
-            ro = ro.to(device, non_blocking=True)
+        if self.row_end_offsets is not None:
+            ro = self.row_end_offsets
+            if ro.device != device:
+                ro = ro.to(device, non_blocking=True)
+        else:
+            # map only, this is fake ro input
+            ro = torch.tensor([42], dtype=torch.int32, device=device)
 
         gi_list: List[torch.Tensor] = []
         for buf_name in self._selector_buf_names:
@@ -147,14 +164,18 @@ class _DynamicCudaWrapper(nn.Module):
                 gi = gi.to(device, non_blocking=True)
             gi_list.append(gi)
 
-        num_rows = int(ro.numel() - 1)
-
         # Determine gather source for num_cols
         if len(self._gather_value_inputs) > 0:
             gv_name = self._gather_value_inputs[0]
         else:
             gv_name = self._non_gather_value_inputs[0]
-        num_cols = int(arg_map[gv_name].numel())
+        num_cols = int(arg_map[gv_name].shape[0])
+
+        if self.row_end_offsets is not None:
+            num_rows = int(ro.numel() - 1)
+        else:
+            # map only, this is fake num_rows
+            num_rows = num_cols
 
         call_args: List[torch.Tensor] = []
         # 1) non-gather value inputs
@@ -170,15 +191,18 @@ class _DynamicCudaWrapper(nn.Module):
         call_args.extend([ro, num_rows, num_cols])
 
         outs = self._ext.merged_spmv_launch(*call_args)
-        if isinstance(outs, tuple):
-            return list(outs)
-        return [outs]
+        if outs is not None:
+            if isinstance(outs, tuple):
+                return list(outs)
+            return [outs]
+        else: 
+            return []
 
 
 def dynamic_replace_submodule(
     compiled_eqn: nn.Module,
     ext,
-    submodule_name: str = "easier5_select_reduce92",
+    submodule_name,
 ) -> bool:
     """Replace a fused FX submodule with a dynamic CUDA wrapper.
 
@@ -186,7 +210,7 @@ def dynamic_replace_submodule(
     from the FX graph and its submodules, then constructs a wrapper that calls
     the CUDA extension following the binding parameter convention.
     """
-    for (gm, node) in get_submodules(compiled_eqn, run_to_collect=False):
+    for (gm, node) in get_submodules_wrapper(compiled_eqn, submodule_name, run_to_collect=False):
         if node.name != submodule_name:
             continue
 
@@ -209,12 +233,10 @@ def dynamic_replace_submodule(
                 inferred_num_rows = int(reducer_mod.n)
 
         if scatter_row_ids is None:
-            # Fallback: if no explicit reducer module found, try first selector's idx
-            if len(selector_idx_tensors) == 0:
-                raise RuntimeError("Failed to detect any selector indices inside the submodule")
-            scatter_row_ids = selector_idx_tensors[0]
-
-        row_end_offsets, num_rows = _coo_rows_to_csr_ptr(scatter_row_ids, inferred_num_rows)
+            # No explicit scatter_row_ids, so row_end_offsets should be None
+            row_end_offsets = None
+        else:
+            row_end_offsets, _ = _coo_rows_to_csr_ptr(scatter_row_ids, inferred_num_rows)
 
         # Infer which inputs are gather value sources (targets of selector modules)
         gather_value_inputs = _infer_gather_value_inputs(gm, selector_qnames)

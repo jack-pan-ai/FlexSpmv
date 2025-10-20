@@ -9,7 +9,6 @@ import numpy as np
 
 import easier as esr
 
-from .utils import get_submodules
 
 class ShallowWaterEquation(esr.Module):
     def __init__(self, mesh_path: str, sw_path: str, dt=0.005, device='cpu') -> None:
@@ -74,7 +73,6 @@ class ShallowWaterEquation(esr.Module):
         self.alpha = esr.Tensor(
             esr.hdf5(sw_path, 'alpha', dtype=torch.double), mode='partition'
         )
-
         self.uh = esr.Tensor(
             esr.zeros((self.nc,), dtype=torch.double), mode='partition'
         )
@@ -85,7 +83,7 @@ class ShallowWaterEquation(esr.Module):
         self.to(device)
 
     def face_reconstruct(self, phi):
-        return (1 - self.alpha) * self.gather_src(phi) + \
+        return (1.0 - self.alpha) * self.gather_src(phi) + \
             self.alpha * self.gather_dst(phi)
 
     def delta(self, h, uh, vh):
@@ -188,4 +186,4 @@ if __name__ == "__main__":
     #             np.savez(f'{args.output}/data{i//10:03d}.npz', x=x, y=y, z=z)
 
     #     eqn()
-    submodules = get_submodules(eqn)
+    # submodules = get_submodules(eqn)

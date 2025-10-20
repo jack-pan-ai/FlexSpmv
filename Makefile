@@ -23,8 +23,10 @@ INCLUDES := -I. -I.. -Iinclude
 INCLUDES += -I$(CUDA_HOME)/include
 
 # CUDA Source files and executables
-FLEX_SOURCE := src/easier_module.cu
-FLEX_EXEC := $(BIN_DIR)/easier_module
+FLEX_SOURCE := src/easier_module_copy.cu
+FLEX_EXEC := $(BIN_DIR)/easier_module_copy
+# FLEX_SOURCE := src/easier_module.cu
+# FLEX_EXEC := $(BIN_DIR)/easier_module
 # # (optional) used for testing full
 # FLEX_SOURCE := src/flex_spmv_full_red.cu
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_full_red

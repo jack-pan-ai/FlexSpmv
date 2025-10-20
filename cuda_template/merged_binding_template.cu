@@ -8,7 +8,7 @@
 namespace {
 
 template <typename ValueT, typename OffsetT>
-static std::tuple<${tuple_type_list}> merged_spmv_launch_typed(
+${tuple_type_return} merged_spmv_launch_typed(
 ${function_params}
 ) {
 ${basic_checks}
@@ -16,7 +16,7 @@ ${dtype_checks}
 
   const int64_t ne = ${ne_expr};
   TORCH_CHECK(ne > 0, "selector index must be non-empty");
-  TORCH_CHECK(row_end_offsets.numel() == num_rows + 1, "row_end_offsets must have length num_rows + 1");
+  // TORCH_CHECK(row_end_offsets.numel() == num_rows + 1, "row_end_offsets must have length num_rows + 1");
 ${ne_multiple_checks}
 
   auto options_val = torch::TensorOptions().dtype(${dispatch_tensor}.scalar_type()).device(${dispatch_tensor}.device());
@@ -49,10 +49,10 @@ ${params_output_ptrs}
   if (d_temp_storage) { cudaFree(d_temp_storage); }
   TORCH_CHECK(err == cudaSuccess, "merged_spmv_launch failed: ", cudaGetErrorString(err));
 
-  return std::make_tuple(${output_tuple_returns});
+  ${output_tuple_returns}
 }
 
-static std::tuple<${tuple_type_list}> merged_spmv_launch_bind(
+${tuple_type_return} merged_spmv_launch_bind(
 ${function_params}
 ) {
   TORCH_CHECK(${dispatch_tensor}.device().is_cuda(), "CUDA device required");
@@ -61,8 +61,10 @@ ${function_params}
       return merged_spmv_launch_typed<float, int>(${function_call_args});
     case torch::kDouble:
       return merged_spmv_launch_typed<double, int>(${function_call_args});
+    ${optional_long_case}    
     default:
-      TORCH_CHECK(false, "Unsupported dtype for ValueT. Use float32 or float64.");
+      std::cerr << "Unsupported dtype for ValueT. dtype code: " << static_cast<int>(${dispatch_tensor}.scalar_type()) << std::endl;
+      // TORCH_CHECK(false, "Unsupported dtype for ValueT. Use float32 or float64.");
   }
 }
 

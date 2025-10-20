@@ -16,20 +16,21 @@ def analyze_tensor_distribution(traced_model):
             submodules.append((submod, node))
     return submodules
 
+
 def get_submodules(eqn, run_to_collect=True):
-    # get the graph of the eqn
+    # get the call_module of the eqn
     if run_to_collect:
         eqn()
     graph = eqn.jit_engine.graph
-    graph.print_tabular()
-    
     submodules = []
+    nodes = []
     for node in graph.nodes:
-        if node.op == 'call_module' and node.name == 'easier2_select2':
+        if node.op == 'call_module':
             submod = eqn.get_submodule(node.target)
-            submod.graph.print_tabular()
-            submodules.append((submod, node))
-    return submodules
+            submodules.append(submod)
+            nodes.append(node)
+    return submodules, nodes
+
 
 def assemble_shallow_water_test_model(mesh: str, shallow_water: str, device='gpu'):
     components = ShallowWaterMeshComponentsCollector(mesh)

@@ -48,18 +48,21 @@ def generate_cuda_code_from_graph(submodule, traced_model):
     output_agent_SMEM_code = []
     output_agent_forloop_code = []
     _tensor_names = set()
+    _tensor_target_selector_set = set() # some gather may share the same selector
     for inp in inputs:
         name = inp['name']
         target = inp['target']
         if inp['dtype'] == 'int':
             # column indices, here target is used
             # considering that multiple selectors might have the same target
-            input_declarations_utils_code.append(
-                f"  OffsetT *{target}_ptr; \n")
-            input_declarations_code.append(
-                f"  ColumnIndicesIteratorT {target}_ptr; \n")
-            input_init_code.append(
-                f"    {target}_ptr(spmv_params.{target}_ptr), \n")
+            if target not in _tensor_target_selector_set:
+                input_declarations_utils_code.append(
+                    f"  OffsetT *{target}_ptr; \n")
+                input_declarations_code.append(
+                    f"  ColumnIndicesIteratorT {target}_ptr; \n")
+                input_init_code.append(
+                    f"    {target}_ptr(spmv_params.{target}_ptr), \n")
+                _tensor_target_selector_set.add(target)
         else:
             # spm and vector x
             input_declarations_utils_code.append(
@@ -132,7 +135,7 @@ def generate_cuda_code_from_graph(submodule, traced_model):
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
                 f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) \
-                    * {_dim} + i] = {target_name}.values[i]; \n")
+                    * {_dim} + i] = {out_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # debug print
@@ -214,6 +217,56 @@ def generate_cuda_code_from_graph(submodule, traced_model):
             map_code.append(
                 f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} / \
                     {op['args'][1]}; \n")
+        elif _op == 'neg':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = -{op['args'][0]}; \n")
+        elif _op == 'exp':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]}.exp(); \n")
+        elif _op == 'getitem':
+            _variable_name = op['args'][0]
+            _index = op['args'][1][1]
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name}({_variable_name}.values[{_index}]); \n")
+        elif _op == 'clone':
+            _variable_name = op['args'][0]
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name}({_variable_name}); \n")
+        elif _op == 'copy_':
+            _output_name = op['args'][0]
+            _variable_name = op['args'][1]
+            map_code.append(f"  #pragma unroll \n")
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    spmv_params.{_output_name}_ptr[\
+                (tile_start_coord.y + nonzero_idx) * {_dim} + i] = \
+                    {_variable_name}.values[i]; \n")
+            map_code.append(f"  }} \n")
+        elif _op == 'add_':
+            map_code.append(
+                f"{op['args'][0]} = {op['args'][0]} + \
+                    {op['args'][1]}; \n")
+            map_code.append(f"  #pragma unroll \n")
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    spmv_params.{op['args'][0]}_ptr[\
+                (tile_start_coord.y + nonzero_idx) * {_dim} + i] = \
+                    {op['args'][0]}.values[i]; \n")
+            map_code.append(f"  }} \n")
+        elif _op == 'setitem':
+            map_code.append(f"  #pragma unroll \n")
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    spmv_params.{op['args'][0]}_ptr[\
+                (tile_start_coord.y + nonzero_idx) * {_dim} + i] = \
+                    {op['args'][2]}.values[i]; \n")
+            map_code.append(f"  }} \n")
+            # the updated output may serves as input for a new function
+            map_code.append(f"  #pragma unroll \n")
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    {op['args'][0]}.values[i] = {op['args'][2]}.values[i];\n")
+            map_code.append(f"  }} \n")
         elif _op == 'norm':
             map_code.append(
                 f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
@@ -223,7 +276,22 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                     {op['args'][0]}; \n")
         elif _op == 'sum':
             map_code.append(f"    {_name} = {_name} + {op['args'][0]}; \n")
-        
+        elif _op == 'abs':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]}.abs(); \n")
+        elif _op == 'sign':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]}.sign(); \n")
+        elif _op == 'lt':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} < {op['args'][1]}; \n")
+        elif _op == 'gt':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} > {op['args'][1]}; \n")
+        elif _op == 'where':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    _where({op['args'][0]}, {op['args'][1]}, {op['args'][2]}); \n")
         else:
             # error
             raise ValueError(f"Operation {_op} not supported")
@@ -391,4 +459,3 @@ def generate_cuda_code_from_graph(submodule, traced_model):
 
     # Delegate binding and wrapper generation to dedicated modules
     generate_binding_code(project_root, inputs, outputs, selector_register)
-    # generate_wrapper_code(project_root, inputs, outputs, selector_register)
