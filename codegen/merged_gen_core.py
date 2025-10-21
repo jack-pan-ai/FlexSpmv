@@ -37,13 +37,16 @@ def declarations_gen(
     output_agent_tenosrs_code = []
     output_agent_forloop_code = []
     _tensor_names = set()
-
+    _tensor_target_selector_set = set()
     for inp in inputs:
         name = inp['name']
+        target = inp['target']
         if inp['dtype'] == 'int':
-            # column indices
-            input_parameters_code.append(
-                f"  OffsetT *__restrict {name}_ptr, \n")
+            if target not in _tensor_target_selector_set:
+                # column indices
+                input_parameters_code.append(
+                    f"  OffsetT *__restrict {target}_ptr, \n")
+                _tensor_target_selector_set.add(target)
         else:
             # spm and vector x
             input_parameters_code.append(
@@ -82,7 +85,7 @@ def declarations_gen(
                 f"  for (int i = 0; i < {_dim}; i++) \n")
             output_agent_forloop_code.append(f"  {{ \n")
             output_agent_forloop_code.append(
-                f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {target_name}.values[i]; \n")
+                f"    output_y_{_name}_ptr[thread_coord.y * {_dim} + i] = {_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
 
     # Generate the selector register code
@@ -101,7 +104,7 @@ def declarations_gen(
             selector_code.append(
                 f"  OffsetT {column_indices} = {selector_ptr}[thread_coord.y]; \n")
             selector_code.append(
-                f"  TensorInput_{_target}_T {_selector_name}({target_ptr} + \
+                f"  TensorInput_{_target}_T {_name}({target_ptr} + \
                     {column_indices} * {_dim}); \n")
         else:
             # spm loading
@@ -141,15 +144,91 @@ def map_gen(map_operations):
 
         if _op == 'add':
             map_code.append(
-                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} + \
+                f"    TensorOutput_{_name}_T {_name} = \
+                    {op['args'][0]} + {op['args'][1]}; \n")
+        elif _op == 'sub':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                {op['args'][0]} - {op['args'][1]}; \n")
+        elif _op == 'mul':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    {op['args'][0]} * {op['args'][1]}; \n")
+        elif _op == 'pow':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    {op['args'][0]} ^ {op['args'][1]}; \n")
+        elif _op == 'truediv':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    {op['args'][0]} / {op['args'][1]}; \n")
+        elif _op == 'neg':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    -{op['args'][0]}; \n")
+        elif _op == 'add_':
+            map_code.append(
+                f"    {op['args'][0]} = {op['args'][0]} + \
                     {op['args'][1]}; \n")
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    {op['args'][0]}_ptr[thread_coord.y * {_dim} + i] = {op['args'][0]}.values[i]; \n")
+            map_code.append(f"  }} \n")
+        elif _op == 'exp':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    {op['args'][0]}.exp(); \n")
         elif _op == 'norm':
             map_code.append(
                 f"    ValueT {_name} = {op['args'][0]}.l2Norm(); \n")
         elif _op == 'reducer':
             pass
+        elif _op == 'getitem':
+            _variable_name = op['args'][0]
+            _index = op['args'][1][1]
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name}({_variable_name}.values[{_index}]); \n")
+        elif _op == 'clone':
+            _variable_name = op['args'][0]
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name}({_variable_name}); \n")
+        elif _op == 'copy_':
+            _output_name = op['args'][0]
+            _variable_name = op['args'][1]
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    {_output_name}_ptr[thread_coord.y * {_dim} + i] = {_variable_name}.values[i]; \n")
+            map_code.append(f"  }} \n")
+        elif _op == 'setitem':
+            _variable_name = op['args'][0]
+            _value_name = op['args'][2]
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    {_variable_name}_ptr[thread_coord.y * {_dim} + i] = {_value_name}.values[i]; \n")
+            map_code.append(f"  }} \n")
+            # the updated output may serves as input for a new function
+            map_code.append(f"  for (int i = 0; i < {_dim}; i++) \n")
+            map_code.append(f"  {{ \n")
+            map_code.append(f"    {_variable_name}.values[i] = {_value_name}.values[i];\n")
+            map_code.append(f"  }} \n")
         elif _op == 'sum':
             pass
+        elif _op == 'abs':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]}.abs(); \n")
+        elif _op == 'sign':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]}.sign(); \n")
+        elif _op == 'lt':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} < {op['args'][1]}; \n")
+        elif _op == 'gt':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = {op['args'][0]} > {op['args'][1]}; \n")
+        elif _op == 'where':
+            map_code.append(
+                f"    TensorOutput_{_name}_T {_name} = \
+                    _where({op['args'][0]}, {op['args'][1]}, {op['args'][2]}); \n")
         else:
             # error
             raise ValueError(f"Operation {_op} not supported")

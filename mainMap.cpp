@@ -58,7 +58,7 @@ template <typename ValueT, typename OffsetT>
 void GenerateRandomSystem(int seed, int num_rows, int num_cols, int nnz,
                           std::vector<OffsetT> &row_end_offsets,
                           std::vector<OffsetT> &selector_1,
-                          std::vector<OffsetT> &selector_2,
+                          // std::vector<OffsetT> &selector_2,
                           std::vector<ValueT> &vector_x, // len num_cols * 2
                           std::vector<ValueT> &spm_1,    // len num_nnz * 2
                           std::vector<ValueT> &spm_2)    // len num_nnz * 6
@@ -87,23 +87,23 @@ void GenerateRandomSystem(int seed, int num_rows, int num_cols, int nnz,
   }
 
   selector_1.resize(nnz);
-  selector_2.resize(nnz);
+  // selector_2.resize(nnz);
   for (int i = 0; i < nnz; ++i) {
     // Ensure selectors are within valid column range [0, num_cols-1]
     selector_1[i] = static_cast<OffsetT>(col_dist(rng));
-    selector_2[i] = static_cast<OffsetT>(col_dist(rng));
+    // selector_2[i] = static_cast<OffsetT>(col_dist(rng));
   }
 
-  vector_x.resize(num_cols * 2);
-  for (int c = 0; c < num_cols * 2; ++c)
+  vector_x.resize(num_cols);
+  for (int c = 0; c < num_cols; ++c)
     vector_x[c] = static_cast<ValueT>(val_dist(rng));
 
-  spm_1.resize(nnz * 2);
-  for (int i = 0; i < nnz * 2; ++i)
+  spm_1.resize(nnz);
+  for (int i = 0; i < nnz; ++i)
     spm_1[i] = static_cast<ValueT>(val_dist(rng));
 
-  spm_2.resize(nnz * 6);
-  for (int i = 0; i < nnz * 6; ++i)
+  spm_2.resize(nnz);
+  for (int i = 0; i < nnz; ++i)
     spm_2[i] = static_cast<ValueT>(val_dist(rng));
 }
 
@@ -121,7 +121,7 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
   std::vector<ValueT> spm_2;
 
   GenerateRandomSystem<ValueT, OffsetT>(seed, num_rows, num_cols, nnz,
-                                        row_end_offsets, selector_1, selector_2,
+                                        row_end_offsets, selector_1, // selector_2,
                                         vector_x, spm_1, spm_2);
 
   const int nv_dim = 2, ne1_dim = 2, ne2_dim = 6;

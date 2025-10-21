@@ -13,9 +13,13 @@
 #include <cuda_runtime.h>
 #include <cmath>
 #include <type_traits>
+#include <algorithm>
+#include <cstdio>
 #else
 #include <cmath>
 #include <type_traits>
+#include <algorithm>
+#include <cstdio>
 #endif
 
 // =============================================================================

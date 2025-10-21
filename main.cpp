@@ -16,8 +16,8 @@
 // #define USE_REDUCERS 1
 // #define USE_AGGREGATORS 0
 
-#define USE_REDUCERS 0
-#define USE_AGGREGATORS 1
+#define USE_REDUCERS 1
+#define USE_AGGREGATORS 0
 
 // --------------------------------------------------------------------
 // Reference CPU implementation Reducers
@@ -26,14 +26,14 @@ template <typename ValueT, typename OffsetT>
 void SpmvGoldCPU_reducers(
     const ValueT *tensor_v, const ValueT *tensor_spm1,
     const ValueT *tensor_spm2, const OffsetT *tensor_v1_idx,
-    const OffsetT *tensor_v2_idx,
+    // const OffsetT *tensor_v2_idx,
     const OffsetT *row_offsets, // CSR row offsets of len num_rows+1
     int num_rows, int nv_dim, int ne1_dim, int ne2_dim,
     ValueT *reducer_1, // [out] size num_rows * ne1_dim
-    ValueT *reducer_2, // [out] size num_rows * ne2_dim
-    ValueT *map_1,     // [out] size num_nonzeros * ne1_dim
-    ValueT *map_2)     // [out] size num_nonzeros * ne2_dim
-{
+    ValueT *reducer_2 // [out] size num_rows * ne2_dim
+    // ValueT *map_1,     // [out] size num_nonzeros * ne1_dim
+    // ValueT *map_2
+  ){
   for (OffsetT row = 0; row < static_cast<OffsetT>(num_rows); ++row) {
     OffsetT row_start = row_offsets[row];
     OffsetT row_end = row_offsets[row + 1];
@@ -43,34 +43,38 @@ void SpmvGoldCPU_reducers(
 
     for (OffsetT i = row_start; i < row_end; ++i) {
       OffsetT selector_i = tensor_v1_idx[i];
-      OffsetT selector_j = tensor_v2_idx[i];
+      // OffsetT selector_j = tensor_v2_idx[i];
       const ValueT *v_i = &tensor_v[selector_i * nv_dim];
-      const ValueT *v_j = &tensor_v[selector_j * nv_dim];
+      // const ValueT *v_j = &tensor_v[selector_j * nv_dim];
       const ValueT *spm_i = &tensor_spm1[i * ne1_dim];
       const ValueT *spm_j = &tensor_spm2[i * ne2_dim];
 
-      std::vector<ValueT> map_1_row(ne1_dim);
-      std::vector<ValueT> map_2_row(ne2_dim);
-      for (int j = 0; j < ne1_dim; ++j)
-        map_1_row[j] = v_i[j] + v_j[j] + spm_i[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        map_2_row[j] = v_j[j % nv_dim] + v_i[j % nv_dim] + spm_j[j];
-
-      for (int j = 0; j < ne1_dim; ++j)
-        map_1[i * ne1_dim + j] = map_1_row[j];
-      for (int j = 0; j < ne2_dim; ++j)
-        map_2[i * ne2_dim + j] = map_2_row[j];
-
-      for (int j = 0; j < ne1_dim; ++j)
-        partial_1[j] += map_1_row[j];
+      // std::vector<ValueT> map_1_row(ne1_dim);
+      // std::vector<ValueT> map_2_row(ne2_dim);
+      auto pow_1 = pow(v_i[0], 2);
+      auto mul_10 = 0.5 * pow_1;
+      auto mul_14 = mul_10 * spm_i[0];
+      auto mul_18 = mul_10 * spm_j[0];
+      // for (int j = 0; j < ne1_dim; ++j)
+      //   map_1_row[j] = v_i[j] + v_j[j] + spm_i[j];
       // for (int j = 0; j < ne2_dim; ++j)
-        // partial_2[j] += map_2_row[j];
+      //   map_2_row[j] = v_j[j % nv_dim] + v_i[j % nv_dim] + spm_j[j];
+
+      // for (int j = 0; j < ne1_dim; ++j)
+      //   map_1[i * ne1_dim + j] = map_1_row[j];
+      // for (int j = 0; j < ne2_dim; ++j)
+      //   map_2[i * ne2_dim + j] = map_2_row[j];
+
+      for (int j = 0; j < ne1_dim; ++j)
+        partial_1[j] += mul_14;
+      for (int j = 0; j < ne2_dim; ++j)
+        partial_2[j] += mul_18;
     }
 
     for (int j = 0; j < ne1_dim; ++j)
       reducer_1[row * ne1_dim + j] = partial_1[j];
-    // for (int j = 0; j < ne2_dim; ++j)
-    //   reducer_2[row * ne2_dim + j] = partial_2[j];
+    for (int j = 0; j < ne2_dim; ++j)
+      reducer_2[row * ne2_dim + j] = partial_2[j];
   }
 }
 
@@ -122,7 +126,7 @@ template <typename ValueT, typename OffsetT>
 void GenerateRandomSystem(int seed, int num_rows, int num_cols, int nnz,
                           std::vector<OffsetT> &row_end_offsets,
                           std::vector<OffsetT> &selector_1,
-                          std::vector<OffsetT> &selector_2,
+                          // std::vector<OffsetT> &selector_2,
                           std::vector<ValueT> &vector_x, // len num_cols * 2
                           std::vector<ValueT> &spm_1,    // len num_nnz * 2
                           std::vector<ValueT> &spm_2)    // len num_nnz * 6
@@ -151,23 +155,23 @@ void GenerateRandomSystem(int seed, int num_rows, int num_cols, int nnz,
   }
 
   selector_1.resize(nnz);
-  selector_2.resize(nnz);
+  // selector_2.resize(nnz);
   for (int i = 0; i < nnz; ++i) {
     // Ensure selectors are within valid column range [0, num_cols-1]
     selector_1[i] = static_cast<OffsetT>(col_dist(rng));
-    selector_2[i] = static_cast<OffsetT>(col_dist(rng));
+    // selector_2[i] = static_cast<OffsetT>(col_dist(rng));
   }
 
-  vector_x.resize(num_cols * 2);
-  for (int c = 0; c < num_cols * 2; ++c)
+  vector_x.resize(num_cols);
+  for (int c = 0; c < num_cols; ++c)
     vector_x[c] = static_cast<ValueT>(val_dist(rng));
 
-  spm_1.resize(nnz * 2);
-  for (int i = 0; i < nnz * 2; ++i)
+  spm_1.resize(nnz);
+  for (int i = 0; i < nnz; ++i)
     spm_1[i] = static_cast<ValueT>(val_dist(rng));
 
-  spm_2.resize(nnz * 6);
-  for (int i = 0; i < nnz * 6; ++i)
+  spm_2.resize(nnz);
+  for (int i = 0; i < nnz; ++i)
     spm_2[i] = static_cast<ValueT>(val_dist(rng));
 }
 
@@ -179,34 +183,44 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
                           bool verbose = false, bool verbose2 = false) {
   std::vector<OffsetT> row_end_offsets;
   std::vector<OffsetT> selector_1;
-  std::vector<OffsetT> selector_2;
+  // std::vector<OffsetT> selector_2;
   std::vector<ValueT> vector_x;
   std::vector<ValueT> spm_1;
   std::vector<ValueT> spm_2;
 
   GenerateRandomSystem<ValueT, OffsetT>(seed, num_rows, num_cols, nnz,
-                                        row_end_offsets, selector_1, selector_2,
+                                        row_end_offsets, selector_1, // selector_2,
                                         vector_x, spm_1, spm_2);
 
-  const int nv_dim = 2, ne1_dim = 2, ne2_dim = 6;
+  const int nv_dim = 1, ne1_dim = 1, ne2_dim = 1;
 
   if (verbose) {
     std::cout << "Generated system: " << num_rows << " rows, " << num_cols
               << " cols, " << nnz << " nnz\n";
   }
 
-  // Outputs
-  std::vector<ValueT> out_map1_ref(nnz * ne1_dim);
-  std::vector<ValueT> out_map2_ref(nnz * ne2_dim);
+  // // Outputs
+  // std::vector<ValueT> out_map1_ref(nnz * ne1_dim);
+  // std::vector<ValueT> out_map2_ref(nnz * ne2_dim);
 
 #if USE_REDUCERS
   std::vector<ValueT> out_red1_ref(num_rows * ne1_dim);
   std::vector<ValueT> out_red2_ref(num_rows * ne2_dim);
   SpmvGoldCPU_reducers<ValueT, OffsetT>(
-      vector_x.data(), spm_1.data(), spm_2.data(), selector_1.data(),
-      selector_2.data(), row_end_offsets.data(), num_rows, nv_dim, ne1_dim,
-      ne2_dim, out_red1_ref.data(), out_red2_ref.data(), out_map1_ref.data(),
-      out_map2_ref.data());
+      vector_x.data(), 
+      spm_1.data(), 
+      spm_2.data(), 
+      selector_1.data(),
+      // selector_2.data(), 
+      row_end_offsets.data(), 
+      num_rows, 
+      nv_dim, ne1_dim,
+      ne2_dim, 
+      out_red1_ref.data(), 
+      out_red2_ref.data() 
+      // out_map1_ref.data(),
+      // out_map2_ref.data()
+    );
 #endif
 
 #if USE_AGGREGATORS
@@ -218,8 +232,8 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
       out_agg2_ref.data(), out_map1_ref.data(), out_map2_ref.data());
 #endif
 
-  std::vector<ValueT> out_map1(nnz * ne1_dim);
-  std::vector<ValueT> out_map2(nnz * ne2_dim);
+  // std::vector<ValueT> out_map1(nnz * ne1_dim);
+  // std::vector<ValueT> out_map2(nnz * ne2_dim);
 #if USE_REDUCERS
   std::vector<ValueT> out_red1(num_rows * ne1_dim);
   std::vector<ValueT> out_red2(num_rows * ne2_dim);
@@ -233,11 +247,17 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
   int threads = omp_get_max_threads();
 #if USE_REDUCERS
   OmpMergeSystem<ValueT, OffsetT>(
-      threads, row_end_offsets.data() + 1, vector_x.data(), 
-       spm_1.data(), spm_2.data(), 
-       selector_1.data(), selector_2.data(),
-      out_map1.data(),
-      out_map2.data(), out_red1.data(), num_rows, nnz);
+      threads, row_end_offsets.data() + 1, 
+      vector_x.data(), 
+       spm_1.data(), 
+       spm_2.data(), 
+       selector_1.data(), 
+      //  selector_2.data(),
+      // out_map1.data(),
+      // out_map2.data(), 
+      out_red1.data(), 
+      out_red2.data(),
+      num_rows, nnz);
 #endif
 #if USE_AGGREGATORS
   OmpMergeSystem<ValueT, OffsetT>(
@@ -256,25 +276,25 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
     if (verbose2)
     {
       // print out_map1_ref
-      std::cout << "map1_ref: ";
-      for (size_t i = 0; i < out_map1_ref.size(); ++i)
-        std::cout << out_map1_ref[i] << " ";
-      std::cout << std::endl;
-      // print out_map1
-      std::cout << "map1: ";
-      for (size_t i = 0; i < out_map1.size(); ++i)
-        std::cout << out_map1[i] << " ";
-      std::cout << std::endl;
-      // print out_map2_ref
-      std::cout << "map2_ref: ";
-      for (size_t i = 0; i < out_map2_ref.size(); ++i)
-        std::cout << out_map2_ref[i] << " ";
-      std::cout << std::endl;
-      // print out_map2
-      std::cout << "map2: ";
-      for (size_t i = 0; i < out_map2.size(); ++i)
-        std::cout << out_map2[i] << " ";
-      std::cout << std::endl;
+      // std::cout << "map1_ref: ";
+      // for (size_t i = 0; i < out_map1_ref.size(); ++i)
+      //   std::cout << out_map1_ref[i] << " ";
+      // std::cout << std::endl;
+      // // print out_map1
+      // std::cout << "map1: ";
+      // for (size_t i = 0; i < out_map1.size(); ++i)
+      //   std::cout << out_map1[i] << " ";
+      // std::cout << std::endl;
+      // // print out_map2_ref
+      // std::cout << "map2_ref: ";
+      // for (size_t i = 0; i < out_map2_ref.size(); ++i)
+      //   std::cout << out_map2_ref[i] << " ";
+      // std::cout << std::endl;
+      // // print out_map2
+      // std::cout << "map2: ";
+      // for (size_t i = 0; i < out_map2.size(); ++i)
+      //   std::cout << out_map2[i] << " ";
+      // std::cout << std::endl;
   #if USE_REDUCERS
       // print out_red1_ref
       std::cout << "red1_ref: ";
@@ -322,20 +342,20 @@ bool VerifyOmpMergeSystem(int seed, int num_rows, int num_cols, int nnz,
     }
 
   bool ok = true;
-  for (size_t i = 0; i < out_map1.size(); ++i)
-    if (!almost_equal(out_map1[i], out_map1_ref[i])) {
-      ok = false;
-      if (verbose)
-        std::cout << "map1 mismatch at " << i << "\n";
-      break;
-    }
-  for (size_t i = 0; i < out_map2.size() && ok; ++i)
-    if (!almost_equal(out_map2[i], out_map2_ref[i])) {
-      ok = false;
-      if (verbose)
-        std::cout << "map2 mismatch at " << i << "\n";
-      break;
-    }
+  // for (size_t i = 0; i < out_map1.size(); ++i)
+  //   if (!almost_equal(out_map1[i], out_map1_ref[i])) {
+  //     ok = false;
+  //     if (verbose)
+  //       std::cout << "map1 mismatch at " << i << "\n";
+  //     break;
+  //   }
+  // for (size_t i = 0; i < out_map2.size() && ok; ++i)
+  //   if (!almost_equal(out_map2[i], out_map2_ref[i])) {
+  //     ok = false;
+  //     if (verbose)
+  //       std::cout << "map2 mismatch at " << i << "\n";
+  //     break;
+  //   }
 #if USE_REDUCERS
   for (size_t i = 0; i < out_red1.size() && ok; ++i)
     if (!almost_equal(out_red1[i], out_red1_ref[i])) {
@@ -393,6 +413,9 @@ int main(int argc, char **argv) {
   int num_rows = 3241;
   int num_cols = 5435;
   int nnz = 324123;
+  // int num_rows = 4;
+  // int num_cols = 5;
+  // int nnz = 12;
   int seed = 123;
   bool verbose = true;
   bool verbose2 = false;

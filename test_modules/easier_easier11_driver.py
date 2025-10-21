@@ -18,25 +18,49 @@ from torch.utils.cpp_extension import load
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.merged_gen_gpu import generate_cuda_code_from_graph
+from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 from python_wrapper.dynamic_replace_submodule import dynamic_replace_submodule
 
 from shallow_water_equation.swe_main import ShallowWaterEquation
 from shallow_water_equation.assemble_shallow_water import ShallowWaterInitializer
-from test_modules.utils import get_submodules, analyze_tensor_distribution, assemble_shallow_water_test_model, assemble_shallow_water_initializer_test_model
+from test_modules.utils import analyze_tensor_distribution, assemble_shallow_water_test_model, assemble_shallow_water_initializer_test_model
 
 
-def trace_easier11(mesh_path: str, sw_path: str, device: str, backend: str, comm_backend: str, dt: float):
+def trace_easier11(mesh_path: str, sw_path: str, device: str, backend: str, comm_backend: str, dt: float, verify: str):
     esr.init(comm_backend)
-    # eqn = ShallowWaterEquation(mesh_path, sw_path, dt, device)
-    # [compiled_eqn] = esr.compile([eqn], backend)
-    # compiled_eqn()
-    compiled_eqn = assemble_shallow_water_test_model(mesh_path, sw_path, device)
-    # compiled_eqn = assemble_shallow_water_initializer_test_model(mesh_path, sw_path, device)
-    submodules = get_submodules(compiled_eqn, run_to_collect=False)
-    for (submodule, node) in submodules:
-        if node.name == "easier2_select2":
-            return compiled_eqn, submodule
-    raise RuntimeError("easier2_select2 not found in traced graph")
+    if verify == "model":
+        eqn = ShallowWaterEquation(mesh_path, sw_path, dt, device)
+        [compiled_eqn] = esr.compile([eqn], backend)
+        compiled_eqn()
+    elif verify == "initializer":
+        compiled_eqn = assemble_shallow_water_initializer_test_model(mesh_path, sw_path, device)
+    else:  # component
+        compiled_eqn = assemble_shallow_water_test_model(mesh_path, sw_path, device)
+
+    
+    # _ = analyze_tensor_distribution(compiled_eqn)
+    # exit()
+    
+    # Collect call_module submodules
+    graph = compiled_eqn.jit_engine.graph
+    graph.print_tabular()
+    chosen = None
+    fallback = None
+    for node in graph.nodes:
+        if node.op == 'call_module':
+            submod = compiled_eqn.get_submodule(node.target)
+            if fallback is None:
+                fallback = (submod, node)
+            if node.name == 'easier0_select293':
+                chosen = (submod, node)
+                break
+    # if chosen is None:
+    #     chosen = fallback
+    if chosen is None:
+        raise RuntimeError("No call_module easier0_select293 nodes found in traced graph")
+    submodule, node = chosen
+    submodule.graph.print_tabular()
+    return compiled_eqn, submodule, node.name
 
 
 def save_model_state(model):
@@ -123,17 +147,17 @@ def coo_rows_to_csr_ptr(row_ids: torch.Tensor, num_rows: int) -> torch.Tensor:
     return crow
 
 
-def run_model_steps(model, num_steps=1):
+def run_model_steps(model, num_steps=10, verify: str = "component"):
     """Run the model for a specified number of steps and capture final state"""
     for step in range(num_steps):
         model()
         print(f"Step {step + 1}/{num_steps} completed")
-    
-    # Return final state
-    # final_state = save_model_state(model)
-    final_state = save_components_state(model)
-    # final_state = save_initializer_state(model)
-    return final_state
+
+    if verify == "model":
+        return save_model_state(model)
+    if verify == "initializer":
+        return save_initializer_state(model)
+    return save_components_state(model)
 
 
 def compare_outputs(original_state, replaced_state, tolerance=1e-10):
@@ -258,92 +282,115 @@ def compare_initializer_outputs(original_state, replaced_state, tolerance=1e-10)
         print("❌ FAILED: Initializer outputs differ")
 
     return all_close
-def build_extension():
-    print("Building CUDA extension")
+def build_extension(device: str):
     project_root = "/home/panq/dev/FlexSpmv"
-    src = os.path.join(project_root, "merged_binding.cu")
     include_dirs = [project_root, os.path.join(project_root, "include")]
-    ext = load(
-        name="flex_spmv_ext",
-        sources=[src],
-        extra_include_paths=include_dirs,
-        extra_cflags=["-O3"],
-        extra_cuda_cflags=[
-            "-O3",
-            "--use_fast_math",
-            "--expt-relaxed-constexpr",
-        ],
-        build_directory=tempfile.mkdtemp(prefix="easier_build_"),
-        keep_intermediates=True,
-        verbose=True,
-    )
+
+    if device == "cuda":
+        print("Building CUDA extension")
+        src = os.path.join(project_root, "merged_binding.cu")
+        ext = load(
+            name="flex_spmv_ext",
+            sources=[src],
+            extra_include_paths=include_dirs,
+            extra_cflags=["-O3"],
+            extra_cuda_cflags=[
+                "-O3",
+                "--use_fast_math",
+                "--expt-relaxed-constexpr",
+            ],
+            build_directory=tempfile.mkdtemp(prefix="easier_build_"),
+            keep_intermediates=True,
+            verbose=True,
+        )
+    else:
+        print("Building CPU extension")
+        src = os.path.join(project_root, "merged_binding_cpu.cpp")
+        ext = load(
+            name="flex_spmv_ext",
+            sources=[src],
+            extra_include_paths=include_dirs,
+            extra_cflags=["-O3", "-fopenmp"],
+            extra_ldflags=["-fopenmp"],
+            build_directory=tempfile.mkdtemp(prefix="easier_build_"),
+            keep_intermediates=True,
+            verbose=True,
+        )
     return ext
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate and load CUDA code for easier2_select2 and test correctness")
+    parser = argparse.ArgumentParser(description="Generate and load CUDA code for easier0_select293 and test correctness")
     parser.add_argument("mesh", type=str, help="Path to mesh HDF5 file")
     parser.add_argument("sw", type=str, help="Path to shallow water HDF5 file")
     parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
-    parser.add_argument("--backend", type=str, default="cuda", choices=["none", "torch", "cpu", "cuda"])
+    parser.add_argument("--backend", type=str, default="torch", choices=["none", "torch", "cpu", "cuda"])
     parser.add_argument("--comm-backend", type=str, default="nccl", choices=["gloo", "nccl"])
     parser.add_argument("--dt", type=float, default=0.005)
     parser.add_argument("--keep", action="store_true", help="Keep generated files")
     parser.add_argument("--steps", type=int, default=10, help="Number of simulation steps to run for testing")
     parser.add_argument("--tolerance", type=float, default=1e-10, help="Tolerance for correctness comparison")
+    parser.add_argument("--verify", type=str, default="model", choices=["model", "initializer", "component"], help="Which pipeline to verify")
 
     args = parser.parse_args()
 
         
     # Step 1: Trace and get the original model
     print("=== Step 1: Tracing original model ===")
-    compiled_eqn, submodule = trace_easier11(
+    compiled_eqn, submodule, target_node_name = trace_easier11(
         args.mesh,
         args.sw,
         args.device,
         args.backend,
         args.comm_backend,
         args.dt,
+        args.verify,
     )
     compiled_eqn()
     # Step 2: Save initial state and run original model
     print("\n=== Step 2: Running original model ===")
-    # _ =analyze_tensor_distribution(compiled_eqn)
-    # exit()
-    # initial_state = save_model_state(compiled_eqn)
-    initial_state = save_components_state(compiled_eqn)
-    # initial_state = save_initializer_state(compiled_eqn)
-    original_final_state = run_model_steps(compiled_eqn, args.steps)
+    if args.verify == "model":
+        initial_state = save_model_state(compiled_eqn)
+    elif args.verify == "initializer":
+        initial_state = save_initializer_state(compiled_eqn)
+    else:
+        initial_state = save_components_state(compiled_eqn)
+    original_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
     # print(f"Original model final state: {original_final_state}")
     
     # Step 3: Generate and build CUDA extension
     print("\n=== Step 3: Generating and building CUDA extension ===")
-    generate_cuda_code_from_graph(submodule, compiled_eqn)
-    extension = build_extension()
+    if args.device == "cuda":
+        generate_cuda_code_from_graph(submodule, compiled_eqn)
+    else:
+        generate_cpu_code_from_graph(submodule, compiled_eqn)
+    extension = build_extension(args.device)
     
     # Step 4: Restore initial state and replace submodule
     print("\n=== Step 4: Replacing submodule with CUDA extension ===")
-    ok = dynamic_replace_submodule(compiled_eqn, extension, "easier2_select2")
+    ok = dynamic_replace_submodule(compiled_eqn, extension, target_node_name)
     if not ok:
-        raise RuntimeError("Failed to locate target submodule easier2_select2 for replacement")
+        raise RuntimeError(f"Failed to locate target submodule {target_node_name} for replacement")
     print("CUDA extension compiled and registered successfully")
     
     # Step 5: Run model with replaced submodule
     print("\n=== Step 5: Running model with replaced submodule ===")
-    # restore_model_state(compiled_eqn, initial_state)
-    restore_components_state(compiled_eqn, initial_state)
-    # restore_initializer_state(compiled_eqn, initial_state)
-    replaced_final_state = run_model_steps(compiled_eqn, args.steps)
+    if args.verify == "model":
+        restore_model_state(compiled_eqn, initial_state)
+    elif args.verify == "initializer":
+        restore_initializer_state(compiled_eqn, initial_state)
+    else:
+        restore_components_state(compiled_eqn, initial_state)
+    replaced_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
     # print(f"Replaced model final state: {replaced_final_state}")
     
     # Step 6: Compare outputs
     print("\n=== Step 6: Comparing outputs ===")
-    # Detect which compare function to use based on available keys
-    if isinstance(original_final_state.get('src_p', None), list):
-        correctness_passed = compare_components_outputs(original_final_state, replaced_final_state)
-    elif 'x' in original_final_state:
+    if args.verify == "model":
+        correctness_passed = compare_outputs(original_final_state, replaced_final_state, args.tolerance)
+    elif args.verify == "initializer":
         correctness_passed = compare_initializer_outputs(original_final_state, replaced_final_state, args.tolerance)
     else:
-        correctness_passed = compare_outputs(original_final_state, replaced_final_state, args.tolerance)
+        correctness_passed = compare_components_outputs(original_final_state, replaced_final_state)
     
     return 0 if correctness_passed else 1
 

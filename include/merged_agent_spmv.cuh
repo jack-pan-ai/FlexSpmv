@@ -121,23 +121,17 @@ namespace merged
         };
 
         // Tensor and TensorKey for input vector x
-          typedef Tensor<ValueT, 3> TensorInput_cells_T; 
-  typedef Tensor<ValueT, 1> TensorInput_dst_p_0_T; 
-  typedef Tensor<ValueT, 1> TensorInput_dst_p_1_T; 
-  typedef Tensor<ValueT, 1> TensorInput_dst_p_2_T; 
+          typedef Tensor<ValueT, 1> TensorInput_scatter_T; 
+  typedef Tensor<ValueT, 1> TensorInput_area_T; 
+  typedef Tensor<ValueT, 1> TensorInput_h_T; 
 
 
         // Tensor and TensorKey for reducers 
         
-          typedef Tensor<ValueT, 1> TensorOutput_getitem_1_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_clone_1_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_copy__1_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_getitem_4_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_clone_4_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_copy__4_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_getitem_7_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_clone_7_T; 
-  typedef Tensor<ValueT, 1> TensorOutput_copy__7_T; 
+          typedef Tensor<ValueT, 1> TensorOutput_neg_T; 
+  typedef Tensor<ValueT, 1> TensorOutput_truediv_2_T; 
+  typedef Tensor<ValueT, 1> TensorOutput_mul_19_T; 
+  typedef Tensor<ValueT, 1> TensorOutput_add_10_T; 
 
 
         /// Shared memory type required by this thread block
@@ -164,11 +158,9 @@ namespace merged
         RowOffsetsIteratorT wd_row_end_offsets;
 
         // [code generation] wrapper pointers for loading the data
-          VectorValueIteratorT cells_ptr; 
-  VectorValueIteratorT dst_p_0_ptr; 
-  VectorValueIteratorT dst_p_1_ptr; 
-  VectorValueIteratorT dst_p_2_ptr; 
-  ColumnIndicesIteratorT selector_dst_ptr; 
+          VectorValueIteratorT scatter_ptr; 
+  VectorValueIteratorT area_ptr; 
+  VectorValueIteratorT h_ptr; 
 
 
         //---------------------------------------------------------------------
@@ -184,11 +176,9 @@ namespace merged
             FlexParams<ValueT, OffsetT> &spmv_params) ///< SpMV input parameter bundle
             : temp_storage(temp_storage.Alias()),
                 wd_row_end_offsets(spmv_params.d_row_end_offsets),
-                  cells_ptr(spmv_params.cells_ptr), 
-    dst_p_0_ptr(spmv_params.dst_p_0_ptr), 
-    dst_p_1_ptr(spmv_params.dst_p_1_ptr), 
-    dst_p_2_ptr(spmv_params.dst_p_2_ptr), 
-    selector_dst_ptr(spmv_params.selector_dst_ptr), 
+                  scatter_ptr(spmv_params.scatter_ptr), 
+    area_ptr(spmv_params.area_ptr), 
+    h_ptr(spmv_params.h_ptr), 
 
               spmv_params(spmv_params)
         {
@@ -389,42 +379,33 @@ namespace merged
                 if (nonzero_idx < tile_num_nonzeros)
                 {
                     // [code generation]
-                        VectorValueIteratorT dst_p_0_ptr_current = dst_p_0_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
-    TensorInput_dst_p_0_T dst_p_0(dst_p_0_ptr_current); 
-    VectorValueIteratorT dst_p_1_ptr_current = dst_p_1_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
-    TensorInput_dst_p_1_T dst_p_1(dst_p_1_ptr_current); 
-    VectorValueIteratorT dst_p_2_ptr_current = dst_p_2_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
-    TensorInput_dst_p_2_T dst_p_2(dst_p_2_ptr_current); 
-    ColumnIndicesIteratorT selector_dst_ptr_current =                     selector_dst_ptr + tile_start_coord.y + nonzero_idx; 
-    TensorInput_cells_T                     selector_dst(cells_ptr + *selector_dst_ptr_current * 3); 
+                        VectorValueIteratorT scatter_ptr_current = scatter_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
+    TensorInput_scatter_T scatter(scatter_ptr_current); 
+    VectorValueIteratorT area_ptr_current = area_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
+    TensorInput_area_T area(area_ptr_current); 
+    VectorValueIteratorT h_ptr_current = h_ptr +                     (tile_start_coord.y + nonzero_idx) * 1; 
+    TensorInput_h_T h(h_ptr_current); 
 
 
                     // map
-                        TensorOutput_getitem_1_T getitem_1(selector_dst.values[0]); 
-    TensorOutput_clone_1_T clone_1(getitem_1); 
-  #pragma unroll 
-  for (int i = 0; i < 1; i++) 
-  { 
-    spmv_params.dst_p_0_ptr[                (tile_start_coord.y + nonzero_idx) * 1 + i] =                     clone_1.values[i]; 
-  } 
-    TensorOutput_getitem_4_T getitem_4(selector_dst.values[1]); 
-    TensorOutput_clone_4_T clone_4(getitem_4); 
-  #pragma unroll 
-  for (int i = 0; i < 1; i++) 
-  { 
-    spmv_params.dst_p_1_ptr[                (tile_start_coord.y + nonzero_idx) * 1 + i] =                     clone_4.values[i]; 
-  } 
-    TensorOutput_getitem_7_T getitem_7(selector_dst.values[2]); 
-    TensorOutput_clone_7_T clone_7(getitem_7); 
-  #pragma unroll 
-  for (int i = 0; i < 1; i++) 
-  { 
-    spmv_params.dst_p_2_ptr[                (tile_start_coord.y + nonzero_idx) * 1 + i] =                     clone_7.values[i]; 
-  } 
+                        TensorOutput_neg_T neg = -scatter; 
+    TensorOutput_truediv_2_T truediv_2 = neg /                     area; 
+    TensorOutput_mul_19_T mul_19 = 0.0025 *                     truediv_2; 
+    TensorOutput_add_10_T add_10 = h +                     mul_19; 
 
 
                     //output for map
-                    
+                      #pragma unroll 
+  for (int i = 0; i < 1; i++) 
+  { 
+    spmv_params.output_y_truediv_2_ptr[(tile_start_coord.y + nonzero_idx)                     * 1 + i] = truediv_2.values[i]; 
+  } 
+  #pragma unroll 
+  for (int i = 0; i < 1; i++) 
+  { 
+    spmv_params.output_y_add_10_ptr[(tile_start_coord.y + nonzero_idx)                     * 1 + i] = add_10.values[i]; 
+  } 
+
                 }
             }
 

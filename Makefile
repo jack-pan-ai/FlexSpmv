@@ -23,8 +23,8 @@ INCLUDES := -I. -I.. -Iinclude
 INCLUDES += -I$(CUDA_HOME)/include
 
 # CUDA Source files and executables
-FLEX_SOURCE := src/easier_module_copy.cu
-FLEX_EXEC := $(BIN_DIR)/easier_module_copy
+# FLEX_SOURCE := src/easier_module_copy.cu
+# FLEX_EXEC := $(BIN_DIR)/easier_module_copy
 # FLEX_SOURCE := src/easier_module.cu
 # FLEX_EXEC := $(BIN_DIR)/easier_module
 # # (optional) used for testing full
@@ -40,8 +40,8 @@ FLEX_EXEC := $(BIN_DIR)/easier_module_copy
 # FLEX_EXEC := $(BIN_DIR)/flex_spmv_map
 
 # CPU Source files and executables
-# CPU_SOURCE := main.cpp
-# CPU_EXEC := $(BIN_DIR)/merged_system_cpu
+CPU_SOURCE := main.cpp
+CPU_EXEC := $(BIN_DIR)/merged_system_cpu
 # (optional) used for testing map
 # CPU_SOURCE := mainMap.cpp
 # CPU_EXEC := $(BIN_DIR)/merged_system_cpu_map

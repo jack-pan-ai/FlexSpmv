@@ -1,9 +1,11 @@
 # This file is used to generate the CPU code from the graph
 import string
+import os
 import easier as esr
 
 from trace.graph_trace import trace_graph
 from codegen.merged_gen_core import declarations_gen, reducer_gen, map_gen, aggregator_gen
+from codegen.merged_gen_binding_cpu import generate_cpu_binding_code
 
 # debug print
 def debug_print(code, code_name):
@@ -143,3 +145,7 @@ def generate_cpu_code_from_graph(submodule, traced_model):
         f.write(spmv_kernel_code)
 
     print("CPU code generated successfully!")
+
+    # Also generate the CPU binding cpp file next to project root
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    generate_cpu_binding_code(project_root, inputs, outputs, selector_register)

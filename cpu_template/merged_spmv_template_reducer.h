@@ -94,7 +94,8 @@ void OmpMergeSystem(
     int num_threads, OffsetT *__restrict row_end_offsets,
     // [code generation]
     ${input_parameters_code} int num_rows, int num_nonzeros) {
-  // [code generation]
+      row_end_offsets = row_end_offsets + 1;
+      // [code generation]
   // input and output tensors types
   ${input_agent_tenosrs_code} ${map_agent_tenosrs_code} ${output_agent_tenosrs_code}
 

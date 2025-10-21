@@ -34,6 +34,7 @@ from torch.utils.cpp_extension import load
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codegen.merged_gen_gpu import generate_cuda_code_from_graph
+from codegen.merged_gen_cpu import generate_cpu_code_from_graph
 from python_wrapper.dynamic_replace_submodule import dynamic_replace_submodule
 
 from shallow_water_equation.swe_main import ShallowWaterEquation
@@ -414,12 +415,78 @@ def snapshot_generated_source(suffix: str) -> tuple[str, str, str]:
     combined_hash = hashlib.sha1((src_hash + dir_hash).encode()).hexdigest()[:12]
     return dst_src, dst_inc, combined_hash
 
+
+def snapshot_generated_source_cpu(suffix: str) -> tuple[str, str, str]:
+    project_root = "/home/panq/dev/FlexSpmv"
+    src = os.path.join(project_root, "merged_binding_cpu.cpp")
+    gen_hdr = os.path.join(project_root, "merged_spmv.h")
+    shared_hdr = os.path.join(project_root, "data_struct_shared.cuh")
+    inc_dir = os.path.join(project_root, "include")
+    if not os.path.exists(src):
+        raise FileNotFoundError(src)
+    tmp_dir = tempfile.mkdtemp(prefix=f"easier_src_cpu_{suffix}_")
+    dst_src = os.path.join(tmp_dir, f"merged_binding_cpu_{suffix}.cpp")
+    shutil.copyfile(src, dst_src)
+    # Snapshot the generated header alongside the source to avoid races
+    if os.path.exists(gen_hdr):
+        shutil.copyfile(gen_hdr, os.path.join(tmp_dir, "merged_spmv.h"))
+    # Also snapshot the shared CPU tensor header referenced by merged_spmv.h
+    if os.path.exists(shared_hdr):
+        shutil.copyfile(shared_hdr, os.path.join(tmp_dir, "data_struct_shared.cuh"))
+    dst_inc = os.path.join(tmp_dir, "include")
+    shutil.copytree(inc_dir, dst_inc)
+    try:
+        with open(dst_src, "rb") as f:
+            src_bytes = f.read()
+        src_hash = hashlib.sha1(src_bytes).hexdigest()[:12]
+    except Exception:
+        src_hash = "nohash"
+    dir_hash = _hash_directory_tree(dst_inc)
+    combined_hash = hashlib.sha1(("cpu:" + src_hash + dir_hash).encode()).hexdigest()[:12]
+    return dst_src, dst_inc, combined_hash
+
+
+def build_cpu_extension_from_src(name, src_path, snapshot_include_dir, hash_key):
+    print(f"Building CPU extension from snapshot: {src_path}")
+    project_root = "/home/panq/dev/FlexSpmv"
+    # Prefer snapshot header (same directory as src) and snapshot include dir; add project_root as fallback
+    include_dirs = [os.path.dirname(src_path), snapshot_include_dir, project_root]
+
+    if shutil.which("sccache"):
+        os.environ.setdefault("CMAKE_C_COMPILER_LAUNCHER", "sccache")
+        os.environ.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", "sccache")
+    elif shutil.which("ccache"):
+        os.environ.setdefault("CMAKE_C_COMPILER_LAUNCHER", "ccache")
+        os.environ.setdefault("CMAKE_CXX_COMPILER_LAUNCHER", "ccache")
+    if "MAX_JOBS" not in os.environ and os.cpu_count():
+        os.environ["MAX_JOBS"] = str(min(8, os.cpu_count()))
+
+    code_hash = hash_key or "nohash"
+    cache_key = f"cpu:{code_hash}"
+    ext_name = f"new_cpu_{name}_{code_hash}"
+
+    cached = EXT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    ext = load(
+        name=ext_name,
+        sources=[src_path],
+        extra_include_paths=include_dirs,
+        extra_cflags=["-O3", "-fopenmp", "-DNDEBUG", "-iquote", os.path.dirname(src_path)],
+        extra_ldflags=["-fopenmp"],
+        keep_intermediates=False,
+        verbose=False,
+    )
+    EXT_CACHE[cache_key] = ext
+    return ext
+
 def main():
     parser = argparse.ArgumentParser(description="Generate and load CUDA code for full and test correctness")
     parser.add_argument("mesh", type=str, help="Path to mesh HDF5 file")
     parser.add_argument("sw", type=str, help="Path to shallow water HDF5 file")
     parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
-    parser.add_argument("--backend", type=str, default="cuda", choices=["none", "torch", "cpu", "cuda"])
+    parser.add_argument("--backend", type=str, default="torch", choices=["none", "torch", "cpu", "cuda"])
     parser.add_argument("--comm-backend", type=str, default="nccl", choices=["gloo", "nccl"])
     parser.add_argument("--dt", type=float, default=0.005)
     parser.add_argument("--keep", action="store_true", help="Keep generated files")
@@ -453,29 +520,38 @@ def main():
     original_final_state = run_model_steps(compiled_eqn, args.steps, args.verify)
     # print(f"Original model final state: {original_final_state}")
     
-    # Step 3: Generate CUDA for each submodule and snapshot sources (sequential to avoid overwrites)
-    print("\n=== Step 3: Generating CUDA for each submodule (snapshotting) ===")
+    # Step 3: Generate device-specific sources for each submodule and snapshot (sequential to avoid overwrites)
+    print("\n=== Step 3: Generating sources for each submodule (snapshotting) ===")
     build_jobs = []  # list of (module_name, snapshot_src, snapshot_inc, combined_hash)
-    for submodule, node in zip(submodules, nodes):
-        generate_cuda_code_from_graph(submodule, compiled_eqn)
-        snap_src, snap_inc, combined_hash = snapshot_generated_source(node.name)
-        build_jobs.append((node.name, snap_src, snap_inc, combined_hash))
+    if args.device == "cuda":
+        for submodule, node in zip(submodules, nodes):
+            generate_cuda_code_from_graph(submodule, compiled_eqn)
+            snap_src, snap_inc, combined_hash = snapshot_generated_source(node.name)
+            build_jobs.append((node.name, snap_src, snap_inc, combined_hash))
+    else:
+        for submodule, node in zip(submodules, nodes):
+            generate_cpu_code_from_graph(submodule, compiled_eqn)
+            snap_src, snap_inc, combined_hash = snapshot_generated_source_cpu(node.name)
+            build_jobs.append((node.name, snap_src, snap_inc, combined_hash))
 
     # Step 3b: Build all snapshots in parallel
-    print("\n=== Step 3b: Building CUDA extensions in parallel ===")
+    print("\n=== Step 3b: Building extensions in parallel ===")
     n_workers = min(len(build_jobs), max(1, (os.cpu_count() or 2) // 2))
     futures = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
         for mod_name, snap_src, snap_inc, combined_hash in build_jobs:
-            futures[mod_name] = executor.submit(
-                build_extension_from_src, mod_name, snap_src, snap_inc, combined_hash
-            )
-
-        # Wait for all to finish and collect modules
+            if args.device == "cuda":
+                futures[mod_name] = executor.submit(
+                    build_extension_from_src, mod_name, snap_src, snap_inc, combined_hash
+                )
+            else:
+                futures[mod_name] = executor.submit(
+                    build_cpu_extension_from_src, mod_name, snap_src, snap_inc, combined_hash
+                )
         built_extensions = {name: fut.result() for name, fut in futures.items()}
 
     # Step 4: Restore initial state and replace submodules sequentially (to preserve semantics)
-    print("\n=== Step 4: Replacing submodules with compiled CUDA extensions ===")
+    print("\n=== Step 4: Replacing submodules with compiled extensions ===")
     for node in nodes:
         extension = built_extensions[node.name]
         ok = dynamic_replace_submodule(compiled_eqn, extension, node.name)
