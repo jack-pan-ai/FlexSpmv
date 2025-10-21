@@ -394,6 +394,8 @@ def main():
     
     return 0 if correctness_passed else 1
 
+# torchrun ./test_modules/easier_easier11_driver.py ~/.easier/triangular_100.hdf5 ~/.easier/SW_100.hdf5 --device cpu --backend torch --comm-backend gloo --verify initializer
+# torchrun ./test_modules/easier_easier11_driver.py ~/.easier/triangular_100.hdf5 ~/.easier/SW_100.hdf5 --device gpu --backend torch --comm-backend nccl --verify initializer
 
 if __name__ == "__main__":
     main()
