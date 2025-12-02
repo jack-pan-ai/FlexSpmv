@@ -3,6 +3,10 @@ flex_spmv_test
 *.mtx
 bin/
 trash/
+kokkos/
+pykokkos-base/
+poisson/
+
 
 # Python bytecode
 __pycache__/
@@ -31,3 +35,4 @@ dist/
 *.i
 
 cpu/bin
+EASIER/

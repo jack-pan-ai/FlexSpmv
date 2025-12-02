@@ -246,11 +246,14 @@ template <
 struct FlexParams
 {
     // [code generation]
-      ValueT *scatter_ptr; 
-  ValueT *area_ptr; 
-  ValueT *h_ptr; 
-  ValueT *output_y_truediv_2_ptr; 
-  ValueT *output_y_add_10_ptr; 
+      ValueT *vector_x_ptr; 
+  ValueT *spm_1_ptr; 
+  ValueT *y_add_1_ptr; 
+  ValueT *spm_2_ptr; 
+  ValueT *y_add_2_ptr; 
+  OffsetT *selector_1_ptr; 
+  OffsetT *selector_2_ptr; 
+  ValueT *output_y_reducer_1_ptr; 
 
     int num_rows;                ///< Number of rows of matrix <b>A</b>.
     int num_cols;                ///< Number of columns of matrix <b>A</b>.

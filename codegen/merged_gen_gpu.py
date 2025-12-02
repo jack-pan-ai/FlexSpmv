@@ -137,22 +137,22 @@ def generate_cuda_code_from_graph(submodule, traced_model):
                 f"    spmv_params.output_y_{out_name}_ptr[(tile_start_coord.y + nonzero_idx) \
                     * {_dim} + i] = {out_name}.values[i]; \n")
             output_agent_forloop_code.append(f"  }} \n")
-
-    # debug print
-    for inp in input_declarations_utils_code:
-        print(f"Input declarations utils: {inp}")
-    for inp in input_declarations_code:
-        print(f"Input declarations: {inp}")
-    for inp in input_init_code:
-        print(f"Input init code: {inp}")
-    for inp in input_agent_tenosrs_code:
-        print(f"Input agent tenosrs code: {inp}")
-    for out in output_agent_tenosrs_code:
-        print(f"Output agent tenosrs code: {out}")
-    for out in output_agent_SMEM_code:
-        print(f"Output agent SMEM code: {out}")
-    for out in output_agent_forloop_code:
-        print(f"Output agent forloop code: {out}")
+    if os.getenv("EASIER_VERBOSE_CODEGEN") in ("1", "", "true", "True"):
+        # debug print
+        for inp in input_declarations_utils_code:
+            print(f"Input declarations utils: {inp}")
+        for inp in input_declarations_code:
+            print(f"Input declarations: {inp}")
+        for inp in input_init_code:
+            print(f"Input init code: {inp}")
+        for inp in input_agent_tenosrs_code:
+            print(f"Input agent tenosrs code: {inp}")
+        for out in output_agent_tenosrs_code:
+            print(f"Output agent tenosrs code: {out}")
+        for out in output_agent_SMEM_code:
+            print(f"Output agent SMEM code: {out}")
+        for out in output_agent_forloop_code:
+            print(f"Output agent forloop code: {out}")
 
     # Generate the selector register code
     selector_code = []
@@ -180,9 +180,10 @@ def generate_cuda_code_from_graph(submodule, traced_model):
             selector_code.append(
                 f"    TensorInput_{_target}_T {_selector_name}({_target}_ptr_current); \n")
 
-    # debug print
-    for inter in selector_code:
-        print(f"Selector code: {inter}")
+    if os.getenv("EASIER_VERBOSE_CODEGEN") in ("1", "", "true", "True"):
+        # debug print
+        for inter in selector_code:
+            print(f"Selector code: {inter}")
 
     # Generate the CUDA kernel code (map operations)
     map_code = []
@@ -295,12 +296,13 @@ def generate_cuda_code_from_graph(submodule, traced_model):
         else:
             # error
             raise ValueError(f"Operation {_op} not supported")
-
-    # # Debug print to check kernel operations
-    for op in map_code:
-        print("Map code: ", op)
-    for op in map_agent_tenosrs_code:
-        print("Map agent tenosrs code: ", op)
+    
+    if os.getenv("EASIER_VERBOSE_CODEGEN") in ("1", "", "true", "True"):
+        # # Debug print to check kernel operations
+        for op in map_code:
+            print("Map code: ", op)
+        for op in map_agent_tenosrs_code:
+            print("Map agent tenosrs code: ", op)
 
     # Generate the aggregator code
     aggregator_code = []
@@ -330,10 +332,11 @@ def generate_cuda_code_from_graph(submodule, traced_model):
             aggregator_code.append(f"   }} \n")
 
     # debug print
-    for op in aggregator_reg_definitions:
-        print(f"Aggregator reg definitions: {op}")
-    for op in aggregator_code:
-        print(f"Aggregator code: {op}")
+    if os.getenv("EASIER_VERBOSE_CODEGEN") in ("1", "", "true", "True"):
+        for op in aggregator_reg_definitions:
+            print(f"Aggregator reg definitions: {op}")
+        for op in aggregator_code:
+            print(f"Aggregator code: {op}")
 
     # Generate the reducer code
     reducer_code = []
@@ -378,8 +381,9 @@ def generate_cuda_code_from_graph(submodule, traced_model):
         reducer_code.append(f"   CTA_SYNC(); \n")
 
     # # debug print
-    for op in reducer_code:
-        print(f"Reducer code: {op}")
+    if os.getenv("EASIER_VERBOSE_CODEGEN") in ("1", "", "true", "True"):
+        for op in reducer_code:
+            print(f"Reducer code: {op}")
 
     # Create directories for generated code if they don't exist
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
